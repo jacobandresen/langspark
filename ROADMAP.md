@@ -10,9 +10,9 @@ All spec files are located in `openspec/changes/langspark/specs/`.
 
 ### Core Infrastructure
 - [x] Set up Rust workspace with `langspark-core` and `langspark-gui` crates
-- [ ] Configure Cargo.toml dependencies for both crates
+- [x] Configure Cargo.toml dependencies for both crates
 - [ ] Set up basic CI/CD pipeline (cargo build, test, clippy, fmt)
-- [ ] Create project directory structure
+- [x] Create project directory structure
 
 ### Data Layer Foundation
 - [ ] Define core data structures (Language, VocabularyEntry, Kanji, SrsCard, etc.)
@@ -26,12 +26,19 @@ All spec files are located in `openspec/changes/langspark/specs/`.
 - [ ] Implement test utilities for common scenarios
 - [ ] Add basic test coverage reporting
 
+### Logging
+- [x] Add logging module to langspark-core
+- [x] Add init_logging function
+- [x] Add logging re-export in lib.rs
+- [x] Add debug check utility
+
 ## Phase 2: Language Management
 
 *Spec: `language-management/spec.md`*
 
 ### Requirement: Support multiple languages
-- [ ] Implement Language enum with Japanese and Spanish support (Scenario: User selects Japanese/Spanish)
+- [x] Implement Language enum with Japanese and Spanish support (Scenario: User selects Japanese/Spanish)
+- [x] Add Language trait for language-specific behavior
 - [ ] Configure VOICEVOX TTS for Japanese
 - [ ] Configure Piper TTS with Spanish model for Spanish
 - [ ] Configure qwen3_asr_rs for both languages
@@ -41,6 +48,10 @@ All spec files are located in `openspec/changes/langspark/specs/`.
 - [ ] Implement active language getter/setter (Scenario: User switches from Japanese to Spanish)
 - [ ] Add language-specific resource path resolution
 - [ ] Persist selection across sessions
+
+### Language Module
+- [x] Create LanguageRegistry with available languages and their metadata
+- [x] Create LanguageManager to track active language and coordinate language-specific features
 
 ### Requirement: Language installation
 - [ ] Create download manager for JMdict JSON
@@ -86,6 +97,15 @@ All spec files are located in `openspec/changes/langspark/specs/`.
 
 *Spec: `vocabulary-management/spec.md`*
 
+### Data Structures
+- [x] Define VocabEntry struct with all required fields from vocabulary-management spec
+- [x] Define KanjiEntry struct with all required fields from kanji-lookup spec
+- [x] Define SrsCard struct for SRS tracking (from spaced-repetition spec)
+- [x] Define PronunciationResult struct for scoring feedback
+- [x] Add language field to all data structures
+- [ ] Implement Serialize/Deserialize for all data structures
+- [ ] Create type aliases and newtype wrappers for domain types (Word, Reading, etc.)
+
 ### Vocabulary CRUD
 - [ ] Implement VocabularyEntry create operation
 - [ ] Implement VocabularyEntry read operation
@@ -110,7 +130,17 @@ All spec files are located in `openspec/changes/langspark/specs/`.
 - [ ] Unit tests for search and filtering
 - [ ] Integration test for vocabulary persistence
 
-## Phase 5: Kanji Lookup
+## Phase 5: SRS Engine Module
+
+*Spec: `spaced-repetition/spec.md`*
+
+### SRS Data Structures
+- [x] Define SrsBackend trait with required methods
+- [x] Implement SM2Backend struct with SM-2 algorithm
+- [x] Define SrsCard struct for SRS tracking
+- [x] Create SrsManager to track all cards and scheduling (language-aware)
+
+## Phase 5.5: Kanji Lookup
 
 *Spec: `kanji-lookup/spec.md`*
 
@@ -135,7 +165,19 @@ All spec files are located in `openspec/changes/langspark/specs/`.
 - [ ] Unit tests for filtering
 - [ ] Integration test for kanji lookup performance
 
-## Phase 6: Spaced Repetition Engine
+## Phase 6: Audio Module
+
+*Spec: `pronunciation-practice/spec.md`*
+
+### Audio Module
+- [x] Create AudioManager struct to coordinate TTS, recording, recognition (language-aware)
+- [x] Implement CPAL-based audio recorder placeholder
+- [x] Implement audio playback placeholder
+- [x] Create waveform data extraction for visualization placeholder
+- [x] Build audio caching system for TTS output placeholder
+- [x] Implement audio file format handling (WAV) placeholder
+
+## Phase 6.5: Spaced Repetition Engine
 
 *Spec: `spaced-repetition/spec.md`*
 

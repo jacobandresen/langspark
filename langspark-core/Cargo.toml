@@ -33,13 +33,13 @@ strum_macros = "0.25"
 cpal = "0.15"
 
 # TTS (Japanese)
-voicevox_core = "0.15"
+# voicevox_core = "0.15"  # Commented out - check latest version
 
 # TTS (Spanish)
-piper = "0.16"
+# piper = "0.2"  # Commented out - check latest version
 
 # ASR
-qwen3_asr_rs = "0.1"
+# qwen3_asr_rs = "0.1"  # Commented out - check latest version
 
 [dev-dependencies]
 tempfile = "3.8"

@@ -14,6 +14,7 @@
 pub mod audio;
 pub mod dictionary;
 pub mod language;
+pub mod logging;
 pub mod srs;
 pub mod vocabulary;
 
@@ -21,5 +22,6 @@ pub mod vocabulary;
 pub use audio::{AudioManager, PronunciationScorer, SpeechRecognizer, TtsBackend};
 pub use dictionary::{Dictionary, DictionaryManager, VocabEntry};
 pub use language::{Language, LanguageManager, LanguageRegistry};
+pub use logging::init_logging;
 pub use srs::{SrsBackend, SrsCard, SrsManager};
 pub use vocabulary::KanjiEntry;
