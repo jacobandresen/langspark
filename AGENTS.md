@@ -2,7 +2,44 @@
 
 This file contains instructions for agents working on the LangSpark project.
 
+## Autonomous Implementation
+
+Agents shall work autonomously, deriving all implementation decisions directly from the OpenSpec specifications. The OpenSpec change proposal in `openspec/changes/langspark/` is the single source of truth for requirements, design decisions, and acceptance criteria.
+
+**Implementation shall be driven by specs, not by external assumptions.** Every feature, every function, and every test shall trace back to a specific requirement in the spec files. If a requirement is ambiguous or missing, clarify it in the spec before proceeding.
+
+The `ROADMAP.md` provides a suggested order of implementation with bite-sized tasks. Follow this roadmap to ensure incremental, testable progress. Each roadmap item references its corresponding spec requirement, enabling direct traceability from implementation to specification.
+
+**Do not wait for instructions.** Use the specs and roadmap to determine the next action. If blocked, refer to the spec to identify what is missing and either implement it or document the gap.
+
+## Decision Authority
+
+- **Specs are authoritative**: If there is a conflict between specs and any other document, the spec prevails
+- **Tests define correctness**: Implementation is complete when all spec scenarios pass their corresponding tests
+- **Document deviations**: If you must deviate from specs, document the reason and update the spec accordingly
+
+## Implementation Workflow
+
+1. Read the relevant spec section for the current task
+2. Identify the specific Requirement and Scenario you are implementing
+3. Write the minimal code to satisfy the Scenario
+4. Write tests that verify the Scenario works as specified
+5. Verify all existing tests still pass
+6. Move to the next roadmap item
+
+Do not implement features not specified in the specs. Do not add complexity beyond what the specs require.
+
 ## Implementation Guidelines
+
+### Human Readability
+
+Code shall be written first and foremost for human understanding. The implementation must prioritize clarity, consistency, and maintainability over cleverness or brevity.
+
+- **Descriptive naming**: Use names that reveal intent. Prefer `calculate_next_review_date()` over `calc_date()`. Avoid abbreviations unless they are widely understood in the domain (e.g., SRS for Spaced Repetition System).
+- **Small, focused functions**: Each function shall do one thing and do it well. Aim for functions under 20-30 lines. If a function needs a comment to explain what it does, consider splitting it.
+- **Explicit over implicit**: Make behavior obvious. Avoid hidden side effects, complex control flow, and magical values. Use enums instead of integers for state (e.g., `CardState::New` not `0`).
+- **Consistent style**: Follow Rust idioms consistently throughout. Use the same pattern for similar problems rather than inventing new approaches each time.
+- **Self-documenting code**: Structure code so its purpose is evident without comments. Use clear types, well-named variables, and logical flow. Comments should explain *why*, not *what*.
 
 ### Modular Architecture
 
@@ -109,9 +146,39 @@ data/
 - Avoid unsafe code unless absolutely necessary
 - Keep dependencies minimal and well-justified
 
+## Documentation Standards
+
+Human-readable code requires human-readable documentation.
+
+- **Module-level docs**: Every module shall have a doc comment explaining its purpose, responsibilities, and how it fits into the larger system. Include examples of typical usage where helpful.
+- **Public API docs**: All public functions, structs, enums, and traits shall have doc comments explaining their purpose, parameters, return values, and any invariants.
+- **Example code**: Documentation shall include compileable examples where possible, using Rust's `///` doc comment syntax.
+- **Readme-driven development**: Each major component shall have a README.md in its directory explaining its design decisions, data flow, and integration points for new contributors.
+- **Change documentation**: Significant changes shall be documented with clear rationale. Use git commit messages that explain the *why* behind changes, not just the *what*.
+
+## Code Review Guidelines
+
+To maintain human readability across the codebase:
+
+- **Review for clarity first**: Does the code clearly express its intent? If not, request improvements before approving.
+- **Question abbreviations**: Any non-obvious abbreviation shall be defined in comments or documentation.
+- **Enforce consistency**: New code shall match the style and patterns of existing code in the same module.
+- **Prefer simplicity**: Reject clever solutions that sacrifice readability. Complex problems deserve simple, clear solutions.
+- **Document assumptions**: Code that relies on non-obvious behavior or external constraints shall document those assumptions inline.
+
+## Specification Maintenance
+
+When specs need clarification or updating:
+
+- **Ambiguity**: If a spec is unclear, propose a clarification as a PR to the spec file with reasoning
+- **Missing requirements**: If you discover a necessary requirement not in specs, add it to the appropriate spec file
+- **Changes**: Any spec change must be validated with `openspec validate langspark --type change`
+- **Traceability**: Every code change shall reference the spec requirement it satisfies in commit messages
+
 ## Before Committing
 
 - Run `cargo test` to ensure all tests pass
 - Run `cargo clippy` to catch linting issues
 - Run `cargo fmt` to ensure consistent formatting
 - Verify no license references are missing for data usage
+- Verify your changes trace to specific spec requirements
