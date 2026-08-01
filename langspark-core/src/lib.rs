@@ -12,6 +12,7 @@
 //! to support multiple languages simultaneously.
 
 pub mod audio;
+pub mod database;
 pub mod dictionary;
 pub mod language;
 pub mod logging;
@@ -20,6 +21,7 @@ pub mod vocabulary;
 
 // Re-export main types for convenience
 pub use audio::{AudioManager, PronunciationScorer, SpeechRecognizer, TtsBackend};
+pub use database::{Database, Repository, initialize_schema, Migration};
 pub use dictionary::{Dictionary, DictionaryManager, VocabEntry};
 pub use language::{Language, LanguageManager, LanguageRegistry};
 pub use logging::init_logging;

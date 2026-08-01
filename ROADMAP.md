@@ -67,7 +67,20 @@ All spec files are located in `openspec/changes/langspark/specs/`.
 - [ ] Integration test for language persistence
 - [ ] Integration test for download and installation
 
-## Phase 3: Dictionary Integration
+## Phase 3: Data Layer Foundation
+
+*Spec: Various (database infrastructure)*
+
+### Database Schema
+- [x] Create SQLite schema for all tables (vocabulary, kanji, cards, decks, reviews, settings, languages)
+- [x] Add language field to all relevant tables
+- [x] Implement database initialization and migration system
+
+### Repository Trait
+- [x] Create Repository trait for database operations
+- [x] Add Database wrapper struct
+
+## Phase 3.5: Dictionary Integration
 
 *Spec: `dictionary-integration/spec.md`*
 
