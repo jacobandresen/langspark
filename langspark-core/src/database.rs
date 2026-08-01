@@ -219,11 +219,11 @@ mod tests {
         
         // Verify tables were created
         let tables: Vec<String> = conn
-            .query_row(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-                [],
-                |row| row.get(0),
-            )
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
             .unwrap();
         
         assert!(tables.contains(&"vocabulary".to_string()));

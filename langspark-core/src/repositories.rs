@@ -4,10 +4,17 @@
 
 use crate::database::{Database, Repository};
 use crate::language::Language;
+use crate::srs::{CardState, RATING_AGAIN, RATING_EASY, RATING_GOOD, RATING_HARD, SrsBackend, SrsCard, SM2Backend};
 use anyhow::{Context, Result};
-use rusqlite::{params, Row};
+use rusqlite::{params, Row, Error as RusqliteError, types::Type};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+/// Rating for SRS (1=Again, 2=Hard, 3=Good, 4=Easy)
+pub type SrsRating = u32;
+
+/// Type alias for rusqlite Result for from_row methods
+type RResult<T> = std::result::Result<T, RusqliteError>;
 
 /// Vocabulary entry with full fields
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,7 +32,7 @@ pub struct VocabularyEntry {
 }
 
 impl VocabularyEntry {
-    fn from_row(row: &Row) -> Result<Self> {
+    fn from_row(row: &Row) -> RResult<Self> {
         Ok(Self {
             id: row.get(0)?,
             word: row.get(1)?,
@@ -62,7 +69,8 @@ impl SqliteVocabularyRepository {
         )?;
         
         let entries = stmt.query_map(params![language], VocabularyEntry::from_row)?
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<RResult<Vec<_>>>()
+            .map_err(|e| anyhow::Error::new(e))?;
         
         Ok(entries)
     }
@@ -71,28 +79,40 @@ impl SqliteVocabularyRepository {
     pub fn search(&self, query: &str, language: Option<&str>) -> Result<Vec<VocabularyEntry>> {
         let conn = self.db.conn();
         let query_pattern = format!("%{}%", query);
+        let lang_param: Box<dyn rusqlite::ToSql> = language.map(|s| Box::new(s.to_string()) as Box<dyn rusqlite::ToSql>).unwrap_or_else(|| Box::new(""));
         
-        let (sql, params) = if let Some(lang) = language {
-            (
-                "SELECT id, word, reading, meaning, language, level, part_of_speech, tags, created_at, updated_at 
-                 FROM vocabulary 
-                 WHERE language = ? AND (word LIKE ? OR reading LIKE ? OR meaning LIKE ?) 
-                 ORDER BY word",
-                params![lang, &query_pattern, &query_pattern, &query_pattern],
-            )
+        let sql = if language.is_some() {
+            "SELECT id, word, reading, meaning, language, level, part_of_speech, tags, created_at, updated_at 
+             FROM vocabulary 
+             WHERE language = ? AND (word LIKE ? OR reading LIKE ? OR meaning LIKE ?) 
+             ORDER BY word"
         } else {
-            (
-                "SELECT id, word, reading, meaning, language, level, part_of_speech, tags, created_at, updated_at 
-                 FROM vocabulary 
-                 WHERE word LIKE ? OR reading LIKE ? OR meaning LIKE ? 
-                 ORDER BY word",
-                params![&query_pattern, &query_pattern, &query_pattern],
-            )
+            "SELECT id, word, reading, meaning, language, level, part_of_speech, tags, created_at, updated_at 
+             FROM vocabulary 
+             WHERE word LIKE ? OR reading LIKE ? OR meaning LIKE ? 
+             ORDER BY word"
         };
         
         let mut stmt = conn.prepare(sql)?;
-        let entries = stmt.query_map(params, VocabularyEntry::from_row)?
-            .collect::<Result<Vec<_>>>()?;
+        
+        let params: Vec<Box<dyn rusqlite::ToSql>> = if language.is_some() {
+            vec![
+                lang_param,
+                Box::new(query_pattern.clone()),
+                Box::new(query_pattern.clone()),
+                Box::new(query_pattern),
+            ]
+        } else {
+            vec![
+                Box::new(query_pattern.clone()),
+                Box::new(query_pattern.clone()),
+                Box::new(query_pattern),
+            ]
+        };
+        
+        let entries = stmt.query_map(rusqlite::params_from_iter(params), VocabularyEntry::from_row)?
+            .collect::<RResult<Vec<_>>>()
+            .map_err(|e| anyhow::Error::new(e))?;
         
         Ok(entries)
     }
@@ -115,7 +135,7 @@ pub struct KanjiEntry {
 }
 
 impl KanjiEntry {
-    fn from_row(row: &Row) -> Result<Self> {
+    fn from_row(row: &Row) -> RResult<Self> {
         Ok(Self {
             id: row.get(0)?,
             character: row.get(1)?,
@@ -153,7 +173,8 @@ impl SqliteKanjiRepository {
         
         stmt.query_row(params![character], |row| KanjiEntry::from_row(row))
             .map(Some)
-            .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
+            .map_err(|e| anyhow::Error::new(e))
+            .or_else(|e| if e.downcast_ref::<rusqlite::Error>() == Some(&rusqlite::Error::QueryReturnedNoRows) { Ok(None) } else { Err(e) })
     }
     
     /// Search by character, reading, or meaning
@@ -171,61 +192,23 @@ impl SqliteKanjiRepository {
         let entries = stmt.query_map(
             params![&query_pattern, &query_pattern, &query_pattern, &query_pattern],
             KanjiEntry::from_row,
-        )?.collect::<Result<Vec<_>>>()?;
+        )?.collect::<RResult<Vec<_>>>()
+            .map_err(|e| anyhow::Error::new(e))?;
         
         Ok(entries)
     }
 }
 
-/// SRS card state
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum CardState {
-    New,
-    Learning,
-    Review,
-}
-
-impl CardState {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            CardState::New => "new",
-            CardState::Learning => "learning",
-            CardState::Review => "review",
-        }
-    }
-    
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "new" => Some(CardState::New),
-            "learning" => Some(CardState::Learning),
-            "review" => Some(CardState::Review),
-            _ => None,
-        }
-    }
-}
-
-/// SRS card entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SrsCard {
-    pub id: Option<i64>,
-    pub vocab_id: Option<i64>,
-    pub kanji_id: Option<i64>,
-    pub card_type: String,
-    pub state: CardState,
-    pub repetitions: i32,
-    pub ease_factor: f64,
-    pub interval_days: i32,
-    pub next_review_date: Option<String>,
-    pub last_reviewed: Option<String>,
-    pub language: String,
-    pub created_at: Option<String>,
-}
-
+/// Database-specific implementation for SrsCard
 impl SrsCard {
-    fn from_row(row: &Row) -> Result<Self> {
+    fn from_row(row: &Row) -> RResult<Self> {
         let state_str: String = row.get(4)?;
         let state = CardState::from_str(&state_str)
-            .context(format!("Invalid card state: {}", state_str))?;
+            .ok_or_else(|| RusqliteError::FromSqlConversionFailure(
+                4, 
+                Type::Text,
+                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Invalid card state: {}", state_str)))
+            ))?;
         
         Ok(Self {
             id: row.get(0)?,
@@ -243,9 +226,6 @@ impl SrsCard {
         })
     }
 }
-
-/// Rating for SRS (1=Again, 2=Hard, 3=Good, 4=Easy)
-pub type SrsRating = u32;
 
 /// SQLite repository for SRS card operations
 pub struct SqliteSrsRepository {
@@ -270,7 +250,8 @@ impl SqliteSrsRepository {
         )?;
         
         let cards = stmt.query_map(params![language, today], SrsCard::from_row)?
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<RResult<Vec<_>>>()
+            .map_err(|e| anyhow::Error::new(e))?;
         
         Ok(cards)
     }
@@ -279,153 +260,45 @@ impl SqliteSrsRepository {
     pub fn update_after_review(&self, card_id: i64, rating: SrsRating) -> Result<()> {
         let conn = self.db.conn();
         
-        // Get current card state
-        let mut stmt = conn.prepare(
-            "SELECT state, repetitions, ease_factor, interval_days FROM srs_cards WHERE id = ?",
-        )?;
+        // Load the full card from database
+        let card = self.get_card_by_id(card_id)?;
         
-        let row = stmt.query_row(params![card_id], |row| {
-            let state_str: String = row.get(0)?;
-            let repetitions: i32 = row.get(1)?;
-            let ease_factor: f64 = row.get(2)?;
-            let interval_days: i32 = row.get(3)?;
-            
-            Ok((state_str, repetitions, ease_factor, interval_days))
-        })?;
+        // Use the SM-2 backend to update the card
+        let backend = SM2Backend;
+        let mut card_for_update = card.clone();
+        backend.update_card(&mut card_for_update, rating);
         
-        let (state_str, repetitions, ease_factor, interval_days) = row;
-        let state = CardState::from_str(&state_str)
-            .context("Invalid card state")?;
-        
-        // Calculate new values based on SM-2 algorithm
-        let (new_state, new_repetitions, new_ease_factor, new_interval) = 
-            calculate_sm2(state, repetitions, ease_factor, interval_days, rating);
-        
-        let new_next_review = chrono::Local::now() + chrono::Duration::days(new_interval as i64);
-        
-        // Update the card
+        // Update the card in database
         let mut update_stmt = conn.prepare(
             "UPDATE srs_cards 
-             SET state = ?, repetitions = ?, ease_factor = ?, interval_days = ?, next_review_date = ?, last_reviewed = CURRENT_TIMESTAMP 
+             SET state = ?, repetitions = ?, ease_factor = ?, interval_days = ?, next_review_date = ?, last_reviewed = ?
              WHERE id = ?",
         )?;
         
         update_stmt.execute(params![
-            new_state.as_str(),
-            new_repetitions,
-            new_ease_factor,
-            new_interval,
-            new_next_review.format("%Y-%m-%d %H:%M:%S").to_string(),
+            card_for_update.state.as_str(),
+            card_for_update.repetitions,
+            card_for_update.ease_factor,
+            card_for_update.interval_days,
+            card_for_update.next_review_date,
+            card_for_update.last_reviewed,
             card_id,
         ])?;
         
         Ok(())
     }
-}
-
-/// Calculate SM-2 algorithm values
-/// Based on the Anki SM-2 algorithm
-fn calculate_sm2(
-    current_state: CardState,
-    repetitions: i32,
-    ease_factor: f64,
-    interval: i32,
-    rating: SrsRating,
-) -> (CardState, i32, f64, i32) {
-    match rating {
-        1 => {
-            // Again - reset repetitions, decrease ease factor
-            let new_ease_factor = (ease_factor - 0.20).max(1.3);
-            (CardState::New, 0, new_ease_factor, 1)
-        }
-        2 => {
-            // Hard - reset repetitions, same interval
-            let new_ease_factor = (ease_factor - 0.15).max(1.3);
-            let new_interval = (interval as f64 * new_ease_factor) as i32;
-            (CardState::Learning, 0, new_ease_factor, new_interval.max(1))
-        }
-        3 => {
-            // Good - increment repetitions
-            let new_repetitions = repetitions + 1;
-            let new_interval = match new_repetitions {
-                1 => 1,      // First correct review: 1 day
-                2 => 6,      // Second correct review: 6 days
-                _ => (interval as f64 * ease_factor) as i32,
-            };
-            let new_state = match new_repetitions {
-                1 => CardState::Learning,
-                2 => CardState::Learning,
-                3 => CardState::Review,
-                _ => CardState::Review,
-            };
-            (new_state, new_repetitions, ease_factor, new_interval.max(1))
-        }
-        4 => {
-            // Easy - increment repetitions, increase ease factor
-            let new_repetitions = repetitions + 1;
-            let new_ease_factor = (ease_factor + 0.15).min(2.5);
-            let new_interval = match new_repetitions {
-                1 => 1,
-                2 => 6,
-                _ => (interval as f64 * new_ease_factor) as i32,
-            };
-            let new_state = match new_repetitions {
-                1 => CardState::Learning,
-                2 => CardState::Learning,
-                3 => CardState::Review,
-                _ => CardState::Review,
-            };
-            (new_state, new_repetitions, new_ease_factor, new_interval.max(1))
-        }
-        _ => unreachable!(),
+    
+    /// Get a single card by ID
+    pub fn get_card_by_id(&self, card_id: i64) -> Result<SrsCard> {
+        let conn = self.db.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, vocab_id, kanji_id, card_type, state, repetitions, ease_factor, interval_days, next_review_date, last_reviewed, language, created_at 
+             FROM srs_cards WHERE id = ?",
+        )?;
+        
+        let card = stmt.query_row(params![card_id], SrsCard::from_row)?;
+        Ok(card)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_sm2_again_rating() {
-        let (state, reps, ef, interval) = calculate_sm2(
-            CardState::New, 0, 2.5, 0, 1,
-        );
-        assert_eq!(state, CardState::New);
-        assert_eq!(reps, 0);
-        assert!((ef - 2.3).abs() < 0.01);
-        assert_eq!(interval, 1);
-    }
-    
-    #[test]
-    fn test_sm2_good_first_review() {
-        let (state, reps, ef, interval) = calculate_sm2(
-            CardState::New, 0, 2.5, 0, 3,
-        );
-        assert_eq!(state, CardState::Learning);
-        assert_eq!(reps, 1);
-        assert!((ef - 2.5).abs() < 0.01);
-        assert_eq!(interval, 1);
-    }
-    
-    #[test]
-    fn test_sm2_good_second_review() {
-        let (state, reps, ef, interval) = calculate_sm2(
-            CardState::Learning, 1, 2.5, 1, 3,
-        );
-        assert_eq!(state, CardState::Learning);
-        assert_eq!(reps, 2);
-        assert!((ef - 2.5).abs() < 0.01);
-        assert_eq!(interval, 6);
-    }
-    
-    #[test]
-    fn test_sm2_good_third_review() {
-        let (state, reps, ef, interval) = calculate_sm2(
-            CardState::Learning, 2, 2.5, 6, 3,
-        );
-        assert_eq!(state, CardState::Review);
-        assert_eq!(reps, 3);
-        assert!((ef - 2.5).abs() < 0.01);
-        assert!((interval as f64 - 15.0).abs() < 0.01);
-    }
-}
+

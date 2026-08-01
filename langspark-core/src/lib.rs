@@ -25,5 +25,8 @@ pub use database::{Database, Repository, initialize_schema, Migration};
 pub use dictionary::{Dictionary, DictionaryManager};
 pub use language::{Language, LanguageManager, LanguageRegistry};
 pub use logging::init_logging;
-pub use repositories::{CardState, KanjiEntry, SrsCard, SrsRating, SqliteKanjiRepository, SqliteSrsRepository, SqliteVocabularyRepository, VocabularyEntry};
-pub use srs::{SrsBackend, SrsManager};
+pub use repositories::{KanjiEntry, SqliteKanjiRepository, SqliteSrsRepository, SqliteVocabularyRepository, VocabularyEntry};
+pub use srs::{CardState, SrsBackend, SrsCard, SrsManager};
+
+/// Rating for SRS (1=Again, 2=Hard, 3=Good, 4=Easy)
+pub type SrsRating = u32;
