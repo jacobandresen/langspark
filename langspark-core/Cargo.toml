@@ -25,6 +25,9 @@ log = "0.4"
 # Async
 tokio = { version = "1.0", features = ["full"] }
 
+# Date/time handling
+chrono = "0.4"
+
 # Language management
 strum = "0.25"
 strum_macros = "0.25"

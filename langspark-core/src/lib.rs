@@ -16,14 +16,14 @@ pub mod database;
 pub mod dictionary;
 pub mod language;
 pub mod logging;
+pub mod repositories;
 pub mod srs;
-pub mod vocabulary;
 
 // Re-export main types for convenience
 pub use audio::{AudioManager, PronunciationScorer, SpeechRecognizer, TtsBackend};
 pub use database::{Database, Repository, initialize_schema, Migration};
-pub use dictionary::{Dictionary, DictionaryManager, VocabEntry};
+pub use dictionary::{Dictionary, DictionaryManager};
 pub use language::{Language, LanguageManager, LanguageRegistry};
 pub use logging::init_logging;
-pub use srs::{SrsBackend, SrsCard, SrsManager};
-pub use vocabulary::KanjiEntry;
+pub use repositories::{CardState, KanjiEntry, SrsCard, SrsRating, SqliteKanjiRepository, SqliteSrsRepository, SqliteVocabularyRepository, VocabularyEntry};
+pub use srs::{SrsBackend, SrsManager};

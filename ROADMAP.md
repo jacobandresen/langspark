@@ -80,6 +80,21 @@ All spec files are located in `openspec/changes/langspark/specs/`.
 - [x] Create Repository trait for database operations
 - [x] Add Database wrapper struct
 
+### Concrete Repositories
+- [x] Implement SqliteRepository for vocabulary CRUD (with language filtering)
+- [x] Implement SqliteRepository for kanji CRUD
+- [x] Implement SqliteRepository for SRS card operations (with language filtering)
+- [ ] Implement SqliteRepository for deck operations
+- [ ] Implement SqliteRepository for review history
+- [ ] Implement SqliteRepository for language management
+- [ ] Add database backup/restore functionality
+
+### SM-2 Implementation
+- [x] Implement next_interval calculation
+- [x] Implement ease factor adjustment based on ratings
+- [x] Implement card state management (new, learning, review)
+- [x] Add unit tests for SM-2 calculations
+
 ## Phase 3.5: Dictionary Integration
 
 *Spec: `dictionary-integration/spec.md`*
