@@ -57,7 +57,7 @@ Code shall be written first and foremost for human understanding. The implementa
 
 The implementation shall follow a modular design where each component has a single, well-defined responsibility. Modules shall be loosely coupled, with clear interfaces that minimize dependencies between them. This approach enables easier testing, maintenance, and future extension.
 
-The Rust workspace structure (`jv-core` and `jv-gui`) shall be preserved, with `jv-core` containing all business logic independent of the UI, and `jv-gui` handling presentation and user interaction exclusively.
+The Rust workspace structure (`langspark-core` and `langspark-gui`) shall be preserved, with `langspark-core` containing all business logic independent of the UI, and `langspark-gui` handling presentation and user interaction exclusively.
 
 ### Testability
 

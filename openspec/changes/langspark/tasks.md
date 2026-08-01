@@ -1,9 +1,9 @@
 ## 1. Project Setup
 
-- [ ] 1.1 Create Rust workspace with jv-core and jv-gui crates
+- [ ] 1.1 Create Rust workspace with langspark-core and langspark-gui crates
 - [ ] 1.2 Add basic Cargo.toml files for workspace and both crates
-- [ ] 1.3 Add initial dependencies to jv-core (serde, serde_json, rusqlite, thiserror, anyhow, log)
-- [ ] 1.4 Add initial dependencies to jv-gui (adw, gtk4, gdk4, glib, gio, tokio)
+- [ ] 1.3 Add initial dependencies to langspark-core (serde, serde_json, rusqlite, thiserror, anyhow, log)
+- [ ] 1.4 Add initial dependencies to langspark-gui (adw, gtk4, gdk4, glib, gio, tokio)
 - [ ] 1.5 Add language management dependencies (strum, strum_macros)
 - [ ] 1.6 Create directory structure for both crates
 - [ ] 1.7 Set up basic logging infrastructure
@@ -81,8 +81,8 @@
 ## 8. Text-to-Speech (Multi-Language)
 
 - [ ] 8.1 Define TtsBackend trait for language-agnostic TTS
-- [ ] 8.2 Add voicevox_core dependency to jv-core (Japanese)
-- [ ] 8.3 Add piper dependency to jv-core (Spanish and others)
+- [ ] 8.2 Add voicevox_core dependency to langspark-core (Japanese)
+- [ ] 8.3 Add piper dependency to langspark-core (Spanish and others)
 - [ ] 8.4 Create VoicevoxTTS wrapper struct for Japanese
 - [ ] 8.5 Create PiperTTS wrapper struct for Spanish
 - [ ] 8.6 Implement synthesize method for text-to-speech (trait-based)
@@ -93,7 +93,7 @@
 
 ## 9. Speech Recognition (Multi-Language)
 
-- [ ] 9.1 Add qwen3_asr_rs dependency to jv-core
+- [ ] 9.1 Add qwen3_asr_rs dependency to langspark-core
 - [ ] 9.2 Create SpeechRecognizer wrapper struct
 - [ ] 9.3 Implement transcribe method for audio-to-text (language-aware)
 - [ ] 9.4 Add language parameter configuration for qwen3_asr_rs
@@ -245,7 +245,7 @@
 
 ## 24. Integration
 
-- [ ] 24.1 Connect jv-core to jv-gui (dependency setup)
+- [ ] 24.1 Connect langspark-core to langspark-gui (dependency setup)
 - [ ] 24.2 Implement event/message passing between core and UI
 - [ ] 24.3 Create async bridge for core operations
 - [ ] 24.4 Add error propagation from core to UI
@@ -263,7 +263,7 @@
 
 ## 26. Testing
 
-- [ ] 26.1 Add unit tests for jv-core data models
+- [ ] 26.1 Add unit tests for langspark-core data models
 - [ ] 26.2 Create tests for SRS algorithm
 - [ ] 26.3 Add tests for dictionary loading (both languages)
 - [ ] 26.4 Create tests for language switching
@@ -277,7 +277,7 @@
 - [ ] 27.2 Add usage documentation
 - [ ] 27.3 Create architecture documentation
 - [ ] 27.4 Add language-specific setup instructions
-- [ ] 27.5 Add API documentation for jv-core
+- [ ] 27.5 Add API documentation for langspark-core
 - [ ] 27.6 Implement help system in UI
 
 ## 28. Advanced Features (Optional / Phase 2)

@@ -36,7 +36,7 @@ Constraints:
 
 ### Architecture: Rust Workspace with Core/GUI Separation
 
-**Decision:** Use a Rust workspace with two crates: `jv-core` (business logic, data models, SRS, audio, dictionary) and `jv-gui` (GTK4 UI, widgets, user interaction).
+**Decision:** Use a Rust workspace with two crates: `langspark-core` (business logic, data models, SRS, audio, dictionary) and `langspark-gui` (GTK4 UI, widgets, user interaction).
 
 **Rationale:** 
 - Clear separation of concerns: core logic independent of UI framework
@@ -252,7 +252,7 @@ LanguageManager
 jv/
 ├── Cargo.toml                    # Workspace
 ├── crates/
-│   ├── jv-core/
+│   ├── langspark-core/
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs          # Public API

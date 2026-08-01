@@ -30,7 +30,7 @@ Learning vocabulary effectively requires a combination of spaced repetition for 
 
 ## Impact
 
-- New Rust workspace with `jv-core` (business logic) and `jv-gui` (GTK4 UI) crates
+- New Rust workspace with `langspark-core` (business logic) and `langspark-gui` (GTK4 UI) crates
 - New dependencies: voicevox_core, piper, cpal, qwen3_asr_rs, tokio, serde, rusqlite, gtk4, libadwaita
 - New data directory for language-specific dictionary JSON files and SQLite database
 - New audio resources for pronunciation (generated on-demand via language-specific TTS)

@@ -27,8 +27,8 @@ Inspired by clean, functional design principles, the LangSpark interface organiz
 
 LangSpark is built as a Rust workspace with two main crates:
 
-- **`jv-core`**: The business logic engine handling SRS calculations, dictionary queries, audio processing, and language management
-- **`jv-gui`**: The GTK4/libadwaita user interface providing the kiosk-style layout and responsive interactions
+- **`langspark-core`**: The business logic engine handling SRS calculations, dictionary queries, audio processing, and language management
+- **`langspark-gui`**: The GTK4/libadwaita user interface providing the kiosk-style layout and responsive interactions
 
 Data persistence uses SQLite for reliability, with language-specific assets (dictionary JSON files, TTS models) stored in a dedicated directory. Audio capture and playback leverage CPAL for cross-platform microphone support.
 
@@ -99,8 +99,8 @@ Select a word, click Play to hear the native pronunciation, then record yourself
 
 ```
 LangSpark/
-├── jv-core/           # Core logic: SRS, dictionaries, audio processing
-├── jv-gui/           # GTK4 user interface
+├── langspark-core/           # Core logic: SRS, dictionaries, audio processing
+├── langspark-gui/           # GTK4 user interface
 ├── data/             # Language-specific assets and SQLite database
 │   ├── ja/           # Japanese dictionaries and models
 │   ├── es/           # Spanish dictionaries and models
