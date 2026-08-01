@@ -9,7 +9,7 @@ All spec files are located in `openspec/changes/langspark/specs/`.
 *Spec: Project infrastructure (not in capability specs)*
 
 ### Core Infrastructure
-- [ ] Set up Rust workspace with `jv-core` and `jv-gui` crates
+- [x] Set up Rust workspace with `jv-core` and `jv-gui` crates
 - [ ] Configure Cargo.toml dependencies for both crates
 - [ ] Set up basic CI/CD pipeline (cargo build, test, clippy, fmt)
 - [ ] Create project directory structure

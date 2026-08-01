@@ -29,6 +29,18 @@ The `ROADMAP.md` provides a suggested order of implementation with bite-sized ta
 
 Do not implement features not specified in the specs. Do not add complexity beyond what the specs require.
 
+## Roadmap Synchronization
+
+The `ROADMAP.md` shall be the living document tracking implementation progress. It must be updated continuously during implementation:
+
+- **Before starting work**: Review ROADMAP.md to understand the current phase and its dependencies
+- **During implementation**: Update task checkboxes in ROADMAP.md as each task is completed (`- [ ]` → `- [x]`)
+- **When specs change**: Update ROADMAP.md to reflect any new or modified requirements from spec changes
+- **When blocked**: Add notes to ROADMAP.md explaining blockers next to relevant tasks
+- **After each session**: Ensure ROADMAP.md accurately reflects the current state
+
+The ROADMAP.md serves as both a planning document and a real-time progress tracker. It is the authoritative source for understanding what has been done, what is in progress, and what remains.
+
 ## Implementation Guidelines
 
 ### Human Readability
@@ -174,6 +186,7 @@ When specs need clarification or updating:
 - **Missing requirements**: If you discover a necessary requirement not in specs, add it to the appropriate spec file
 - **Changes**: Any spec change must be validated with `openspec validate langspark --type change`
 - **Traceability**: Every code change shall reference the spec requirement it satisfies in commit messages
+- **Roadmap update**: After any spec change, update ROADMAP.md to reflect the new or modified tasks
 
 ## Before Committing
 
@@ -182,3 +195,4 @@ When specs need clarification or updating:
 - Run `cargo fmt` to ensure consistent formatting
 - Verify no license references are missing for data usage
 - Verify your changes trace to specific spec requirements
+- **Update ROADMAP.md**: Ensure all completed tasks are checked off before committing code changes

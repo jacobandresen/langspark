@@ -1,0 +1,46 @@
+[package]
+name = "jv-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jacob Andresen <jacob.andresen@gmail.com>"]
+description = "LangSpark core logic: SRS, dictionaries, audio processing, language management"
+license = "GPL-3.0"
+readme = "README.md"
+
+[dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Database
+rusqlite = { version = "0.30", features = ["bundled"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+log = "0.4"
+
+# Async
+tokio = { version = "1.0", features = ["full"] }
+
+# Language management
+strum = "0.25"
+strum_macros = "0.25"
+
+# Audio
+cpal = "0.15"
+
+# TTS (Japanese)
+voicevox_core = "0.15"
+
+# TTS (Spanish)
+piper = "0.16"
+
+# ASR
+qwen3_asr_rs = "0.1"
+
+[dev-dependencies]
+tempfile = "3.8"
+mockall = "0.11"

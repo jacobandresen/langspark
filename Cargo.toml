@@ -1,0 +1,3 @@
+[workspace]
+members = ["jv-core", "jv-gui"]
+resolver = "2"
