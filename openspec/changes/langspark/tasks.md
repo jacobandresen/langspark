@@ -1,29 +1,29 @@
 ## 1. Project Setup
 
-- [ ] 1.1 Create Rust workspace with langspark-core and langspark-gui crates
-- [ ] 1.2 Add basic Cargo.toml files for workspace and both crates
-- [ ] 1.3 Add initial dependencies to langspark-core (serde, serde_json, rusqlite, thiserror, anyhow, log)
-- [ ] 1.4 Add initial dependencies to langspark-gui (adw, gtk4, gdk4, glib, gio, tokio)
-- [ ] 1.5 Add language management dependencies (strum, strum_macros)
-- [ ] 1.6 Create directory structure for both crates
-- [ ] 1.7 Set up basic logging infrastructure
-- [ ] 1.8 Create .gitignore file
+- [x] 1.1 Create Rust workspace with langspark-core and langspark-gui crates
+- [x] 1.2 Add basic Cargo.toml files for workspace and both crates
+- [x] 1.3 Add initial dependencies to langspark-core (serde, serde_json, rusqlite, thiserror, anyhow, log)
+- [ ] 1.4 Add initial dependencies to langspark-gui (adw, gtk4, gdk4, glib, gio, tokio) — gtk4/gdk4/glib/gio/adw are commented out in langspark-gui/Cargo.toml; crate won't compile
+- [x] 1.5 Add language management dependencies (strum, strum_macros)
+- [x] 1.6 Create directory structure for both crates
+- [x] 1.7 Set up basic logging infrastructure
+- [x] 1.8 Create .gitignore file
 
 ## 2. Language Management
 
-- [ ] 2.1 Define Language enum (Japanese, Spanish) and implementations
-- [ ] 2.2 Create Language trait for language-specific behavior
-- [ ] 2.3 Implement LanguageRegistry with available languages and their metadata
-- [ ] 2.4 Create LanguageManager to track active language and coordinate language-specific features
-- [ ] 2.5 Implement language switching logic
+- [x] 2.1 Define Language enum (Japanese, Spanish) and implementations
+- [ ] 2.2 Create Language trait for language-specific behavior — code()/display_name() are inherent impl methods, not a trait
+- [x] 2.3 Implement LanguageRegistry with available languages and their metadata
+- [x] 2.4 Create LanguageManager to track active language and coordinate language-specific features
+- [x] 2.5 Implement language switching logic
 - [ ] 2.6 Add language installation status tracking
 - [ ] 2.7 Create language selection UI component
 
 ## 3. Core Data Model
 
 - [ ] 3.1 Define VocabEntry struct with all required fields from vocabulary-management spec
-- [ ] 3.2 Define KanjiEntry struct with all required fields from kanji-lookup spec
-- [ ] 3.3 Define SrsCard struct for SRS tracking (from spaced-repetition spec)
+- [x] 3.2 Define KanjiEntry struct with all required fields from kanji-lookup spec
+- [x] 3.3 Define SrsCard struct for SRS tracking (from spaced-repetition spec)
 - [ ] 3.4 Define PronunciationResult struct for scoring feedback
 - [ ] 3.5 Add language field to all data structures
 - [ ] 3.6 Implement Serialize/Deserialize for all data structures
@@ -45,10 +45,10 @@
 
 ## 5. Database Layer
 
-- [ ] 5.1 Create SQLite schema for all tables (vocabulary, kanji, cards, decks, reviews, settings, languages)
-- [ ] 5.2 Add language field to all relevant tables
-- [ ] 5.3 Implement database initialization and migration system
-- [ ] 5.4 Create Repository trait for database operations
+- [x] 5.1 Create SQLite schema for all tables (vocabulary, kanji, cards, decks, reviews, settings, languages)
+- [x] 5.2 Add language field to all relevant tables
+- [ ] 5.3 Implement database initialization and migration system — initialize_schema() (create-if-not-exists) works and is tested; no version-tracked migration runner
+- [x] 5.4 Create Repository trait for database operations
 - [ ] 5.5 Implement SqliteRepository for vocabulary CRUD (with language filtering)
 - [ ] 5.6 Implement SqliteRepository for kanji CRUD
 - [ ] 5.7 Implement SqliteRepository for SRS card operations (with language filtering)
@@ -59,13 +59,13 @@
 
 ## 6. Spaced Repetition System
 
-- [ ] 6.1 Define SrsBackend trait with required methods
-- [ ] 6.2 Implement SM2Backend struct with SM-2 algorithm
-- [ ] 6.3 Implement next_interval calculation
-- [ ] 6.4 Implement ease factor adjustment based on ratings
-- [ ] 6.5 Implement card state management (new, learning, review)
-- [ ] 6.6 Create SrsManager to track all cards and scheduling (language-aware)
-- [ ] 6.7 Implement daily review queue generation (filter by active language)
+- [x] 6.1 Define SrsBackend trait with required methods
+- [x] 6.2 Implement SM2Backend struct with SM-2 algorithm
+- [x] 6.3 Implement next_interval calculation
+- [x] 6.4 Implement ease factor adjustment based on ratings
+- [x] 6.5 Implement card state management (new, learning, review)
+- [ ] 6.6 Create SrsManager to track all cards and scheduling (language-aware) — stateless helper (methods take slices as params), doesn't itself track cards
+- [x] 6.7 Implement daily review queue generation (filter by active language)
 - [ ] 6.8 Add statistics tracking (streaks, retention rates)
 - [ ] 6.9 Create deck management functionality
 
@@ -245,7 +245,7 @@
 
 ## 24. Integration
 
-- [ ] 24.1 Connect langspark-core to langspark-gui (dependency setup)
+- [x] 24.1 Connect langspark-core to langspark-gui (dependency setup)
 - [ ] 24.2 Implement event/message passing between core and UI
 - [ ] 24.3 Create async bridge for core operations
 - [ ] 24.4 Add error propagation from core to UI
@@ -264,16 +264,16 @@
 ## 26. Testing
 
 - [ ] 26.1 Add unit tests for langspark-core data models
-- [ ] 26.2 Create tests for SRS algorithm
+- [x] 26.2 Create tests for SRS algorithm
 - [ ] 26.3 Add tests for dictionary loading (both languages)
-- [ ] 26.4 Create tests for language switching
+- [x] 26.4 Create tests for language switching
 - [ ] 26.5 Create integration tests for audio pipeline
 - [ ] 26.6 Add UI tests (if possible with GTK4)
 - [ ] 26.7 Implement manual testing checklist
 
 ## 27. Documentation
 
-- [ ] 27.1 Create README.md with overview and setup instructions
+- [x] 27.1 Create README.md with overview and setup instructions
 - [ ] 27.2 Add usage documentation
 - [ ] 27.3 Create architecture documentation
 - [ ] 27.4 Add language-specific setup instructions
