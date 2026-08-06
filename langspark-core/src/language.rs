@@ -5,12 +5,47 @@
 use anyhow;
 
 /// Supported languages
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, strum::EnumString)]
 pub enum Language {
     /// Japanese
     Japanese,
     /// Spanish
     Spanish,
+}
+
+/// Language-specific behavior shared by every supported language.
+///
+/// Kept as a trait (rather than only inherent methods) so language-agnostic
+/// code can be written against `dyn LanguageInfo` / generic bounds instead of
+/// matching on the `Language` enum directly.
+pub trait LanguageInfo {
+    /// Get the language code (e.g., "ja" for Japanese, "es" for Spanish)
+    fn code(&self) -> &'static str;
+    /// Get the display name
+    fn display_name(&self) -> &'static str;
+}
+
+impl LanguageInfo for Language {
+    fn code(&self) -> &'static str {
+        Language::code(self)
+    }
+
+    fn display_name(&self) -> &'static str {
+        Language::display_name(self)
+    }
+}
+
+/// Installation status of a language's optional resources (dictionary, TTS/ASR models).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallationStatus {
+    /// Nothing has been downloaded yet
+    NotInstalled,
+    /// Download/setup is in progress
+    Installing,
+    /// All required resources are present and usable
+    Installed,
+    /// Installation was attempted but failed
+    Failed,
 }
 
 /// Metadata for a language including its resources and capabilities
@@ -109,6 +144,7 @@ impl LanguageRegistry {
 pub struct LanguageManager {
     registry: LanguageRegistry,
     active_language: Language,
+    installation_status: std::collections::HashMap<Language, InstallationStatus>,
 }
 
 impl Default for LanguageManager {
@@ -123,7 +159,26 @@ impl LanguageManager {
         Self {
             registry: LanguageRegistry::new(),
             active_language,
+            installation_status: std::collections::HashMap::new(),
         }
+    }
+
+    /// Get the installation status of a language (defaults to `NotInstalled`)
+    pub fn get_installation_status(&self, language: Language) -> InstallationStatus {
+        self.installation_status
+            .get(&language)
+            .copied()
+            .unwrap_or(InstallationStatus::NotInstalled)
+    }
+
+    /// Record the installation status of a language
+    pub fn set_installation_status(&mut self, language: Language, status: InstallationStatus) {
+        self.installation_status.insert(language, status);
+    }
+
+    /// Whether the active language's resources are fully installed
+    pub fn is_active_language_installed(&self) -> bool {
+        self.get_installation_status(self.active_language) == InstallationStatus::Installed
     }
     
     /// Get the currently active language
@@ -195,14 +250,14 @@ mod tests {
 
     #[test]
     fn test_language_parse_display() {
-        use strum::Display;
+        
         assert_eq!(Language::Japanese.to_string(), "Japanese");
         assert_eq!(Language::Spanish.to_string(), "Spanish");
     }
 
     #[test]
     fn test_language_parse_from_string() {
-        use strum::EnumString;
+        
         assert_eq!("Japanese".parse::<Language>().unwrap(), Language::Japanese);
         assert_eq!("Japanese".parse::<Language>().unwrap(), Language::Japanese);
         assert_eq!("Spanish".parse::<Language>().unwrap(), Language::Spanish);
@@ -270,6 +325,38 @@ mod tests {
         assert_eq!(manager.get_active_language(), Language::Spanish);
         assert_eq!(manager.get_active_code(), "es");
         assert!(!manager.supports_kanji());
+    }
+
+    #[test]
+    fn test_language_info_trait() {
+        fn code_via_trait(l: &dyn LanguageInfo) -> &'static str {
+            l.code()
+        }
+        assert_eq!(code_via_trait(&Language::Japanese), "ja");
+        assert_eq!(code_via_trait(&Language::Spanish), "es");
+    }
+
+    #[test]
+    fn test_installation_status_tracking() {
+        let mut manager = LanguageManager::new(Language::Japanese);
+        assert_eq!(
+            manager.get_installation_status(Language::Japanese),
+            InstallationStatus::NotInstalled
+        );
+        assert!(!manager.is_active_language_installed());
+
+        manager.set_installation_status(Language::Japanese, InstallationStatus::Installed);
+        assert_eq!(
+            manager.get_installation_status(Language::Japanese),
+            InstallationStatus::Installed
+        );
+        assert!(manager.is_active_language_installed());
+
+        // Spanish status is independent
+        assert_eq!(
+            manager.get_installation_status(Language::Spanish),
+            InstallationStatus::NotInstalled
+        );
     }
 
     #[test]

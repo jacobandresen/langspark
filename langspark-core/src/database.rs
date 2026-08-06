@@ -5,22 +5,30 @@
 
 use rusqlite::{Connection, Result};
 use std::path::Path;
+use std::sync::Mutex;
 
-/// Database connection wrapper
+/// Database connection wrapper.
+///
+/// The connection is behind a `Mutex` (rather than a bare `Connection`, which
+/// is `Send` but not `Sync`) so `Arc<Database>` — and therefore every
+/// repository built on it — can be shared across the background thread pool
+/// used for blocking DB work (see `langspark-gui`'s `task::run_blocking`).
 pub struct Database {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 impl Database {
     /// Open or create a database at the specified path
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
-        Ok(Self { conn })
+        Ok(Self { conn: Mutex::new(conn) })
     }
-    
-    /// Get the underlying connection
-    pub fn conn(&self) -> &Connection {
-        &self.conn
+
+    /// Lock and get the underlying connection. Returns a guard that derefs
+    /// to `Connection`, so existing call sites (`db.conn().prepare(...)`) are
+    /// unaffected by the lock.
+    pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().expect("database connection mutex poisoned")
     }
 }
 
@@ -192,11 +200,83 @@ impl Migration {
             sql: sql.to_string(),
         }
     }
-    
+
     pub fn apply(&self, conn: &Connection) -> Result<()> {
         conn.execute(&self.sql, [])?;
         Ok(())
     }
+}
+
+/// Ensure the table that tracks which migrations have run exists.
+fn ensure_migrations_table(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Apply every migration in `migrations` whose version hasn't been recorded yet,
+/// in ascending version order. Each migration runs in its own transaction so a
+/// failure partway through doesn't leave that migration half-applied, and
+/// already-applied migrations are skipped on subsequent runs.
+pub fn run_migrations(conn: &mut Connection, migrations: &[Migration]) -> Result<()> {
+    ensure_migrations_table(conn)?;
+
+    let mut sorted: Vec<&Migration> = migrations.iter().collect();
+    sorted.sort_by_key(|m| m.version);
+
+    for migration in sorted {
+        let already_applied: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?)",
+            [migration.version],
+            |row| row.get(0),
+        )?;
+        if already_applied {
+            continue;
+        }
+
+        let tx = conn.transaction()?;
+        migration.apply(&tx)?;
+        tx.execute(
+            "INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
+            rusqlite::params![migration.version, migration.description],
+        )?;
+        tx.commit()?;
+    }
+
+    Ok(())
+}
+
+/// The highest migration version that has been applied, if any.
+pub fn current_schema_version(conn: &Connection) -> Result<Option<u32>> {
+    ensure_migrations_table(conn)?;
+    conn.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| row.get(0))
+}
+
+/// Back up the database to `dest_path` using SQLite's atomic online backup API,
+/// safe to run against a live connection.
+pub fn backup_database(conn: &Connection, dest_path: &Path) -> Result<()> {
+    let mut dest = Connection::open(dest_path)?;
+    let backup = rusqlite::backup::Backup::new(conn, &mut dest)?;
+    backup.run_to_completion(5, std::time::Duration::from_millis(250), None)?;
+    Ok(())
+}
+
+/// Restore a database by copying a previously-created backup file over `dest_path`.
+/// The caller must ensure no connection is open on `dest_path` while this runs.
+pub fn restore_database(backup_path: &Path, dest_path: &Path) -> Result<()> {
+    std::fs::copy(backup_path, dest_path).map_err(|e| {
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CANTOPEN),
+            Some(format!("failed to restore database: {e}")),
+        )
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -231,5 +311,46 @@ mod tests {
         assert!(tables.contains(&"srs_cards".to_string()));
         assert!(tables.contains(&"decks".to_string()));
         assert!(tables.contains(&"review_history".to_string()));
+    }
+
+    #[test]
+    fn test_run_migrations_applies_once() {
+        let temp = NamedTempFile::new().unwrap();
+        let mut conn = Connection::open(temp.path()).unwrap();
+        conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY)", []).unwrap();
+
+        let migrations = vec![Migration::new(1, "add name column", "ALTER TABLE widgets ADD COLUMN name TEXT")];
+
+        run_migrations(&mut conn, &migrations).unwrap();
+        assert_eq!(current_schema_version(&conn).unwrap(), Some(1));
+
+        // Running again must not re-apply (would error: duplicate column name)
+        run_migrations(&mut conn, &migrations).unwrap();
+        assert_eq!(current_schema_version(&conn).unwrap(), Some(1));
+    }
+
+    #[test]
+    fn test_backup_and_restore_database() {
+        let source_file = NamedTempFile::new().unwrap();
+        let conn = Connection::open(source_file.path()).unwrap();
+        initialize_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO vocabulary (word, meaning, language) VALUES ('受け取る', 'to receive', 'ja')",
+            [],
+        )
+        .unwrap();
+
+        let backup_file = NamedTempFile::new().unwrap();
+        backup_database(&conn, backup_file.path()).unwrap();
+        drop(conn);
+
+        let restored_file = NamedTempFile::new().unwrap();
+        restore_database(backup_file.path(), restored_file.path()).unwrap();
+
+        let restored_conn = Connection::open(restored_file.path()).unwrap();
+        let word: String = restored_conn
+            .query_row("SELECT word FROM vocabulary LIMIT 1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(word, "受け取る");
     }
 }

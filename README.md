@@ -36,35 +36,60 @@ Data persistence uses SQLite for reliability, with language-specific assets (dic
 
 | Language | Dictionary | TTS Engine | Speech Recognition |
 |----------|------------|------------|-------------------|
-| Japanese | JMdict, Kanjidic | VOICEVOX | qwen3_asr_rs |
-| Spanish | SpanDict | Piper | qwen3_asr_rs |
+| Japanese | JMdict, Kanjidic (`scriptin/jmdict-simplified` JSON format) | [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) (spoken to over its local HTTP API) | qwen3_asr_rs (optional, see below) |
+| Spanish | Custom minimal JSON schema — no maintained JSON dictionary export exists for Spanish; see `langspark_core::dictionary::spanish` | Piper (`piper-rs`, offline ONNX model) | qwen3_asr_rs (optional, see below) |
 
-Additional languages can be added by configuring dictionary datasets and TTS/ASR models.
+Additional languages can be added by implementing a dictionary loader and wiring up TTS/ASR configuration; see `langspark_core::dictionary` and `langspark_core::tts`.
+
+**Speech recognition** (`qwen3_asr_rs`) is behind the `asr` Cargo feature because its only backends are `tch` (needs a system-wide libtorch install) and `mlx` (Apple Silicon only) — the default build doesn't require either, and `SpeechRecognizer::transcribe` reports a clear "unavailable" error without the feature enabled. Build with `cargo build --features langspark-core/asr` once libtorch is installed to enable it.
 
 ## Getting Started
 
 ### Prerequisites
 
-- Rust 1.70+ with Cargo
-- GTK4 and libadwaita development libraries
-- SQLite
-- Audio backend: ALSA/PulseAudio (Linux), Core Audio (macOS), WASAPI (Windows)
+- Rust (edition 2021) with Cargo
+- GTK4 (4.10+) and libadwaita (1.4+) development libraries
+- An audio backend (ALSA/PulseAudio on Linux, CPAL's default host elsewhere)
+- To use pronunciation practice: a running [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) for Japanese TTS, and a downloaded Piper voice model (`.onnx` + `.onnx.json`) for Spanish TTS
 
-### Installation
-
-1. Clone the repository
-2. Install language data: `cargo run -- install-language --lang ja` or `--lang es`
-3. Launch the application: `cargo run`
-
-### Building
-
-LangSpark builds on Linux, macOS, and Windows.
+### Running from source
 
 ```bash
-cargo build --release
+cargo build --workspace          # builds langspark-core and langspark-gui
+cargo run -p langspark-gui       # launches the app
 ```
 
-The release binary will be available in `target/release/` (or `target\release\` on Windows).
+On first run, LangSpark creates its SQLite database at the XDG data directory
+(`~/.local/share/langspark/langspark.db` on Linux) and looks for dictionary
+JSON files under `~/.local/share/langspark/dictionaries/<code>.json` — a
+missing dictionary shows as a dismissible toast rather than a hard failure
+(the app itself still opens).
+
+### Testing
+
+```bash
+cargo test --workspace
+```
+
+`langspark-gui`'s tests construct real GTK widgets, which needs a display
+connection. If none is available (headless CI), run under Xvfb:
+
+```bash
+xvfb-run -a cargo test --workspace
+```
+
+### Building a release binary
+
+```bash
+cargo build --release -p langspark-gui
+```
+
+The optimized binary is at `target/release/langspark-gui`. To install it
+system-wide (binary, `.desktop` entry, AppStream metadata) on Linux:
+
+```bash
+PREFIX=/usr/local ./scripts/install.sh
+```
 
 ### Platform Notes
 
@@ -90,7 +115,7 @@ Select a word, click Play to hear the native pronunciation, then record yourself
 - **Language**: Rust
 - **UI Framework**: GTK4 with libadwaita
 - **Audio**: CPAL for capture, language-specific TTS engines for synthesis
-- **Speech Recognition**: qwen3_asr_rs (supports Japanese and Spanish)
+- **Speech Recognition**: qwen3_asr_rs (optional `asr` feature; supports Japanese and Spanish among 30+ languages)
 - **Database**: SQLite via rusqlite
 - **Async Runtime**: Tokio
 - **Serialization**: Serde
@@ -99,14 +124,23 @@ Select a word, click Play to hear the native pronunciation, then record yourself
 
 ```
 LangSpark/
-├── langspark-core/           # Core logic: SRS, dictionaries, audio processing
-├── langspark-gui/           # GTK4 user interface
-├── data/             # Language-specific assets and SQLite database
-│   ├── ja/           # Japanese dictionaries and models
-│   ├── es/           # Spanish dictionaries and models
-│   └── langspark.db  # User data and SRS state
-└── openspec/         # OpenSpec change documentation
+├── langspark-core/     # Core logic: SRS, dictionaries, audio, TTS/ASR, pronunciation scoring
+│   └── src/
+├── langspark-gui/      # GTK4/libadwaita UI: tabs, dialogs, widgets, app state
+│   ├── src/
+│   └── data/           # style.css, .desktop file, AppStream metadata
+├── scripts/
+│   └── install.sh      # Release build + system install
+└── openspec/           # OpenSpec change documentation
 ```
+
+At runtime, LangSpark stores its data under the platform's standard XDG-style
+directories (see `langspark-gui::config::AppDirs`):
+
+- Database: `~/.local/share/langspark/langspark.db`
+- Dictionaries: `~/.local/share/langspark/dictionaries/`
+- Audio cache: `~/.cache/langspark/audio/`
+- Config: `~/.config/langspark/config.toml`
 
 ## Contributing
 

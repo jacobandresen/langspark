@@ -13,7 +13,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Database
-rusqlite = { version = "0.30", features = ["bundled"] }
+rusqlite = { version = "0.30", features = ["bundled", "backup"] }
 
 # Error handling
 thiserror = "1.0"
@@ -31,17 +31,28 @@ chrono = "0.4"
 # Language management
 strum = { version = "0.25", features = ["derive"] }
 
-# Audio
+# Audio capture/playback
 cpal = "0.15"
+rodio = { version = "0.17", default-features = false, features = ["wav"] }
+hound = "3.5"
 
-# TTS (Japanese)
-# voicevox_core = "0.15"  # Commented out - check latest version
+# TTS (Japanese) - the `voicevox-rs`/`voicevox_core` crates don't build (the former
+# has a broken upstream release, the latter isn't published to crates.io at all), so
+# instead we speak VOICEVOX Engine's local HTTP API directly with a minimal client.
+ureq = { version = "2", features = ["json"] }
 
-# TTS (Spanish)
-# piper = "0.2"  # Commented out - check latest version
+# TTS (Spanish and others) - ONNX runtime + espeak-ng phonemizer, no libtorch needed
+piper-rs = { version = "0.2", default-features = false }
 
-# ASR
-# qwen3_asr_rs = "0.1"  # Commented out - check latest version
+# ASR - requires a libtorch install (LIBTORCH env var or system-wide /usr/lib/libtorch.so);
+# not available in every build environment, so it's opt-in via the `asr` feature.
+qwen3-asr-rs = { version = "0.2", optional = true }
+
+[features]
+# Speech recognition is feature-gated because qwen3-asr-rs's only backends are
+# tch (needs a native libtorch install) and mlx (Apple Silicon only) - neither
+# is guaranteed to be present, so the default build must not require it.
+asr = ["dep:qwen3-asr-rs"]
 
 [dev-dependencies]
 tempfile = "3.8"

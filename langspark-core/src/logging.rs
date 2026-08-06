@@ -3,7 +3,6 @@
 //! This module provides centralized logging setup for the core library.
 //! Use `init_logging` at application startup to configure logging.
 
-use log::{Level, LevelFilter};
 
 /// Initialize logging for the core library
 ///

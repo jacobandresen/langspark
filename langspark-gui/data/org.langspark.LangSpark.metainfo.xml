@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.langspark.LangSpark</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>LangSpark</name>
+  <summary>Offline-first vocabulary and pronunciation practice</summary>
+  <description>
+    <p>
+      LangSpark is a native, offline-first vocabulary application combining
+      spaced repetition (SM-2) with language-aware pronunciation practice.
+      It supports Japanese (with kanji lookup via JMdict/Kanjidic) and
+      Spanish, with an architecture designed to support additional
+      languages one at a time.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.langspark.LangSpark.desktop</launchable>
+  <categories>
+    <category>Education</category>
+    <category>Languages</category>
+  </categories>
+  <content_rating type="oars-1.1" />
+  <url type="homepage">https://github.com/jandresen/langspark</url>
+  <developer_name>Jacob Andresen</developer_name>
+  <releases>
+    <release version="0.1.0" date="2026-08-06">
+      <description>
+        <p>Initial development release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

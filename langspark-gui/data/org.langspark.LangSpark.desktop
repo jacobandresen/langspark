@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=LangSpark
+Comment=Offline-first vocabulary and pronunciation practice
+Exec=langspark-gui
+Icon=org.langspark.LangSpark
+Terminal=false
+Categories=Education;Languages;
+Keywords=vocabulary;flashcards;spaced repetition;pronunciation;japanese;spanish;
+StartupNotify=true

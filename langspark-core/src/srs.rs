@@ -5,9 +5,8 @@
 //! The SM-2 algorithm is based on the original algorithm by Piotr Wozniak,
 //! with modifications for language learning applications.
 
-use chrono::{Duration, NaiveDate};
+use chrono::Duration;
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
 
 /// Card state in the SRS system
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -128,8 +127,6 @@ pub trait SrsBackend {
 pub struct SM2Backend;
 
 impl SM2Backend {
-    /// Initial interval for first review (1 day)
-    const INITIAL_INTERVAL: i32 = 1;
     /// Interval after first successful review (3 days)
     const SECOND_INTERVAL: i32 = 3;
     /// Minimum ease factor
@@ -259,18 +256,62 @@ impl SrsBackend for SM2Backend {
 }
 
 /// Manages all SRS cards and scheduling
-/// 
-/// Provides high-level interface for SRS operations including:
+///
+/// Unlike the stateless helpers below (which operate on caller-supplied
+/// slices), `SrsManager` owns the in-memory working set of cards for the
+/// active session — e.g. the set loaded from the database for the active
+/// language — and provides:
 /// - Card creation and management
 /// - Daily review queue generation
-/// - Statistics tracking
 /// - Language-specific card filtering
-pub struct SrsManager;
+pub struct SrsManager {
+    cards: Vec<SrsCard>,
+}
+
+impl Default for SrsManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SrsManager {
-    /// Create a new SRS manager
+    /// Create a new, empty SRS manager
     pub fn new() -> Self {
-        SrsManager
+        Self { cards: Vec::new() }
+    }
+
+    /// Load a set of cards into the manager's working set (e.g. after
+    /// fetching them from the database for the active language).
+    pub fn load_cards(&mut self, cards: Vec<SrsCard>) {
+        self.cards = cards;
+    }
+
+    /// Add a single card to the working set
+    pub fn add_card(&mut self, card: SrsCard) {
+        self.cards.push(card);
+    }
+
+    /// Remove a card from the working set by ID
+    pub fn remove_card(&mut self, card_id: i64) {
+        self.cards.retain(|c| c.id != Some(card_id));
+    }
+
+    /// All cards currently tracked
+    pub fn cards(&self) -> &[SrsCard] {
+        &self.cards
+    }
+
+    /// Cards in the working set for a specific language
+    pub fn cards_for_language(&self, language: &str) -> Vec<&SrsCard> {
+        self.cards.iter().filter(|c| c.language == language).collect()
+    }
+
+    /// Cards due for review today, filtered to a specific language
+    pub fn due_cards_for_language(&self, language: &str) -> Vec<&SrsCard> {
+        self.cards
+            .iter()
+            .filter(|c| c.language == language && c.is_due_today())
+            .collect()
     }
 
     /// Create a new card for a vocabulary entry
@@ -288,7 +329,7 @@ impl SrsManager {
     }
 
     /// Process a card review with a rating
-    /// 
+    ///
     /// Returns the updated card with new scheduling
     pub fn process_review(&self, mut card: SrsCard, rating: u32) -> SrsCard {
         let backend = SM2Backend;
@@ -309,6 +350,114 @@ impl SrsManager {
             let b_date = b.next_review_date.as_ref().unwrap_or(&default_date);
             a_date.cmp(b_date)
         });
+    }
+}
+
+// ---------------------------------------------------------------------
+// Statistics tracking
+// ---------------------------------------------------------------------
+
+/// Aggregate review statistics for a study session or date range
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ReviewStats {
+    pub total_reviews: i32,
+    pub correct_reviews: i32,
+    pub retention_rate: f64,
+    pub streak_days: i32,
+}
+
+/// Percentage of ratings that counted as a successful recall (Good or Easy).
+/// Returns 0.0 for an empty slice rather than dividing by zero.
+pub fn calculate_retention_rate(ratings: &[u32]) -> f64 {
+    if ratings.is_empty() {
+        return 0.0;
+    }
+    let correct = ratings.iter().filter(|&&r| r >= RATING_GOOD).count();
+    (correct as f64 / ratings.len() as f64) * 100.0
+}
+
+/// Length of the current consecutive-day study streak, given the distinct
+/// dates (YYYY-MM-DD, any order) on which at least one review happened.
+/// The streak counts back from today; a gap breaks it.
+pub fn calculate_streak(review_dates: &[String]) -> i32 {
+    use std::collections::HashSet;
+
+    let dates: HashSet<&str> = review_dates.iter().map(String::as_str).collect();
+    if dates.is_empty() {
+        return 0;
+    }
+
+    let mut streak = 0;
+    let mut cursor = chrono::Local::now().date_naive();
+    loop {
+        let cursor_str = cursor.format("%Y-%m-%d").to_string();
+        if dates.contains(cursor_str.as_str()) {
+            streak += 1;
+            cursor -= Duration::days(1);
+        } else {
+            break;
+        }
+    }
+    streak
+}
+
+/// Build a `ReviewStats` summary from a session's ratings and the set of
+/// distinct dates studied so far (for streak calculation).
+pub fn build_review_stats(ratings: &[u32], review_dates: &[String]) -> ReviewStats {
+    let correct = ratings.iter().filter(|&&r| r >= RATING_GOOD).count() as i32;
+    ReviewStats {
+        total_reviews: ratings.len() as i32,
+        correct_reviews: correct,
+        retention_rate: calculate_retention_rate(ratings),
+        streak_days: calculate_streak(review_dates),
+    }
+}
+
+// ---------------------------------------------------------------------
+// Deck management
+// ---------------------------------------------------------------------
+
+/// In-memory organization of card IDs into named decks, language-aware.
+/// Persistence is handled separately by `SqliteDeckRepository`; this is the
+/// business-logic layer used while a deck is actively being studied/edited.
+#[derive(Debug, Default)]
+pub struct DeckManager {
+    /// deck_id -> card IDs
+    deck_cards: std::collections::HashMap<i64, Vec<i64>>,
+}
+
+impl DeckManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a card to a deck (no-op if already present)
+    pub fn add_card(&mut self, deck_id: i64, card_id: i64) {
+        let cards = self.deck_cards.entry(deck_id).or_default();
+        if !cards.contains(&card_id) {
+            cards.push(card_id);
+        }
+    }
+
+    /// Remove a card from a deck
+    pub fn remove_card(&mut self, deck_id: i64, card_id: i64) {
+        if let Some(cards) = self.deck_cards.get_mut(&deck_id) {
+            cards.retain(|&id| id != card_id);
+        }
+    }
+
+    /// Card IDs belonging to a deck
+    pub fn cards_in_deck(&self, deck_id: i64) -> &[i64] {
+        self.deck_cards.get(&deck_id).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// Number of a deck's cards that are due today, given the full card set
+    pub fn due_count_in_deck(&self, deck_id: i64, all_cards: &[SrsCard]) -> usize {
+        let deck_card_ids = self.cards_in_deck(deck_id);
+        all_cards
+            .iter()
+            .filter(|c| c.id.map(|id| deck_card_ids.contains(&id)).unwrap_or(false) && c.is_due_today())
+            .count()
     }
 }
 
@@ -450,5 +599,82 @@ mod tests {
         assert_eq!(cards[0].next_review_date, Some("2024-01-01".to_string()));
         assert_eq!(cards[1].next_review_date, Some("2024-01-10".to_string()));
         assert_eq!(cards[2].next_review_date, Some("2024-01-15".to_string()));
+    }
+
+    #[test]
+    fn test_srs_manager_language_filtering() {
+        let mut manager = SrsManager::new();
+        let mut ja_card = SrsCard::new("vocabulary", "ja");
+        ja_card.id = Some(1);
+        let mut es_card = SrsCard::new("vocabulary", "es");
+        es_card.id = Some(2);
+
+        manager.add_card(ja_card);
+        manager.add_card(es_card);
+
+        assert_eq!(manager.cards().len(), 2);
+        assert_eq!(manager.cards_for_language("ja").len(), 1);
+        assert_eq!(manager.cards_for_language("es").len(), 1);
+        assert_eq!(manager.due_cards_for_language("ja").len(), 1); // new cards are due
+
+        manager.remove_card(1);
+        assert_eq!(manager.cards().len(), 1);
+        assert!(manager.cards_for_language("ja").is_empty());
+    }
+
+    #[test]
+    fn test_calculate_retention_rate() {
+        assert_eq!(calculate_retention_rate(&[]), 0.0);
+        assert_eq!(
+            calculate_retention_rate(&[RATING_GOOD, RATING_EASY, RATING_AGAIN, RATING_HARD]),
+            50.0
+        );
+        assert_eq!(calculate_retention_rate(&[RATING_GOOD, RATING_EASY]), 100.0);
+    }
+
+    #[test]
+    fn test_calculate_streak() {
+        assert_eq!(calculate_streak(&[]), 0);
+
+        let today = chrono::Local::now().date_naive();
+        let yesterday = (today - Duration::days(1)).format("%Y-%m-%d").to_string();
+        let today_str = today.format("%Y-%m-%d").to_string();
+        let two_weeks_ago = (today - Duration::days(14)).format("%Y-%m-%d").to_string();
+
+        // Consecutive streak of 2
+        assert_eq!(calculate_streak(&[today_str.clone(), yesterday.clone()]), 2);
+
+        // Gap breaks the streak at 1
+        assert_eq!(calculate_streak(&[today_str, two_weeks_ago]), 1);
+    }
+
+    #[test]
+    fn test_build_review_stats() {
+        let today_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let stats = build_review_stats(&[RATING_GOOD, RATING_EASY, RATING_AGAIN], &[today_str]);
+        assert_eq!(stats.total_reviews, 3);
+        assert_eq!(stats.correct_reviews, 2);
+        assert!((stats.retention_rate - (200.0 / 3.0)).abs() < 0.01);
+        assert_eq!(stats.streak_days, 1);
+    }
+
+    #[test]
+    fn test_deck_manager() {
+        let mut manager = DeckManager::new();
+        manager.add_card(1, 100);
+        manager.add_card(1, 101);
+        manager.add_card(1, 100); // duplicate, no-op
+        manager.add_card(2, 200);
+
+        assert_eq!(manager.cards_in_deck(1), &[100, 101]);
+        assert_eq!(manager.cards_in_deck(2), &[200]);
+        assert!(manager.cards_in_deck(99).is_empty());
+
+        manager.remove_card(1, 100);
+        assert_eq!(manager.cards_in_deck(1), &[101]);
+
+        let mut card = SrsCard::new("vocabulary", "ja");
+        card.id = Some(101);
+        assert_eq!(manager.due_count_in_deck(1, &[card]), 1);
     }
 }

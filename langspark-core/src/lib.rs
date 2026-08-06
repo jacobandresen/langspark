@@ -11,22 +11,42 @@
 //! All data structures and core functionality are language-aware and designed
 //! to support multiple languages simultaneously.
 
+pub mod asr;
 pub mod audio;
 pub mod database;
 pub mod dictionary;
+pub mod error;
 pub mod language;
 pub mod logging;
+pub mod model;
+pub mod pronunciation;
 pub mod repositories;
 pub mod srs;
+pub mod tts;
 
 // Re-export main types for convenience
-pub use audio::{AudioManager, PronunciationScorer, SpeechRecognizer, TtsBackend};
+pub use asr::{SpeechRecognizer, TranscriptionResult};
+pub use audio::{audio_devices_available, list_audio_devices, AudioCache, AudioManager, AudioPlayer, AudioRecorder};
+pub use error::LangSparkError;
 pub use database::{Database, Repository, initialize_schema, Migration};
-pub use dictionary::{Dictionary, DictionaryManager};
-pub use language::{Language, LanguageManager, LanguageRegistry};
+pub use dictionary::{Dictionary, DictionaryManager, VocabEntry, VocabFilter};
+pub use language::{InstallationStatus, Language, LanguageInfo, LanguageManager, LanguageRegistry};
 pub use logging::init_logging;
-pub use repositories::{KanjiEntry, SqliteKanjiRepository, SqliteSrsRepository, SqliteVocabularyRepository, VocabularyEntry};
-pub use srs::{CardState, SrsBackend, SrsCard, SrsManager};
+pub use model::{Meaning, Reading, Word};
+pub use pronunciation::{
+    levenshtein_distance, score_pronunciation, score_pronunciation_tier2, segment_units, PronunciationResult,
+    PronunciationScorer,
+};
+pub use repositories::{
+    Deck, KanjiEntry, LanguageRecord, ReviewRecord, SqliteDeckRepository, SqliteKanjiRepository,
+    SqliteLanguageRepository, SqliteReviewRepository, SqliteSrsRepository, SqliteVocabularyRepository,
+    VocabularyEntry,
+};
+pub use srs::{
+    build_review_stats, calculate_retention_rate, calculate_streak, CardState, DeckManager, ReviewStats,
+    SrsBackend, SrsCard, SrsManager, SM2Backend, RATING_AGAIN, RATING_EASY, RATING_GOOD, RATING_HARD,
+};
+pub use tts::{PiperTts, TtsBackend, UnavailableTts, VoiceConfig, VoicevoxTts};
 
 /// Rating for SRS (1=Again, 2=Hard, 3=Good, 4=Easy)
 pub type SrsRating = u32;
