@@ -1,0 +1,588 @@
+word	reading	meaning	level	pos
+一	いち	one	N5	noun
+二	に	two	N5	noun
+三	さん	three	N5	noun
+四	よん	four	N5	noun
+五	ご	five	N5	noun
+六	ろく	six	N5	noun
+七	なな	seven	N5	noun
+八	はち	eight	N5	noun
+九	きゅう	nine	N5	noun
+十	じゅう	ten	N5	noun
+百	ひゃく	hundred	N5	noun
+千	せん	thousand	N5	noun
+万	まん	ten thousand	N5	noun
+今日	きょう	today	N5	noun
+明日	あした	tomorrow	N5	noun
+昨日	きのう	yesterday	N5	noun
+今	いま	now	N5	noun
+時間	じかん	time; hour	N5	noun
+分	ふん	minute	N5	noun
+週間	しゅうかん	week (duration)	N5	noun
+月	つき	month; moon	N5	noun
+年	とし	year	N5	noun
+朝	あさ	morning	N5	noun
+昼	ひる	noon; daytime	N5	noun
+夜	よる	night	N5	noun
+毎日	まいにち	every day	N5	noun
+毎週	まいしゅう	every week	N5	noun
+毎年	まいとし	every year	N5	noun
+月曜日	げつようび	Monday	N5	noun
+火曜日	かようび	Tuesday	N5	noun
+水曜日	すいようび	Wednesday	N5	noun
+木曜日	もくようび	Thursday	N5	noun
+金曜日	きんようび	Friday	N5	noun
+土曜日	どようび	Saturday	N5	noun
+日曜日	にちようび	Sunday	N5	noun
+家族	かぞく	family	N5	noun
+父	ちち	father	N5	noun
+母	はは	mother	N5	noun
+兄	あに	older brother	N5	noun
+姉	あね	older sister	N5	noun
+弟	おとうと	younger brother	N5	noun
+妹	いもうと	younger sister	N5	noun
+両親	りょうしん	parents	N5	noun
+子供	こども	child	N5	noun
+私	わたし	I; me	N5	noun
+友達	ともだち	friend	N5	noun
+先生	せんせい	teacher	N5	noun
+学生	がくせい	student	N5	noun
+人	ひと	person	N5	noun
+学校	がっこう	school	N5	noun
+家	いえ	house	N5	noun
+会社	かいしゃ	company	N5	noun
+病院	びょういん	hospital	N5	noun
+銀行	ぎんこう	bank	N5	noun
+駅	えき	station	N5	noun
+図書館	としょかん	library	N5	noun
+店	みせ	shop	N5	noun
+部屋	へや	room	N5	noun
+国	くに	country	N5	noun
+日本	にほん	Japan	N5	noun
+本	ほん	book	N5	noun
+新聞	しんぶん	newspaper	N5	noun
+車	くるま	car	N5	noun
+電車	でんしゃ	train	N5	noun
+自転車	じてんしゃ	bicycle	N5	noun
+かばん	かばん	bag	N5	noun
+机	つくえ	desk	N5	noun
+椅子	いす	chair	N5	noun
+ペン	ぺん	pen	N5	noun
+紙	かみ	paper	N5	noun
+傘	かさ	umbrella	N5	noun
+時計	とけい	clock; watch	N5	noun
+靴	くつ	shoes	N5	noun
+服	ふく	clothes	N5	noun
+お金	おかね	money	N5	noun
+電話	でんわ	telephone	N5	noun
+テレビ	てれび	television	N5	noun
+水	みず	water	N5	noun
+お茶	おちゃ	tea	N5	noun
+食べ物	たべもの	food	N5	noun
+飲み物	のみもの	drink	N5	noun
+ご飯	ごはん	rice; meal	N5	noun
+パン	ぱん	bread	N5	noun
+肉	にく	meat	N5	noun
+魚	さかな	fish	N5	noun
+野菜	やさい	vegetable	N5	noun
+果物	くだもの	fruit	N5	noun
+卵	たまご	egg	N5	noun
+赤	あか	red	N5	noun
+青	あお	blue	N5	noun
+白	しろ	white	N5	noun
+黒	くろ	black	N5	noun
+黄色	きいろ	yellow	N5	noun
+頭	あたま	head	N5	noun
+目	め	eye	N5	noun
+耳	みみ	ear	N5	noun
+口	くち	mouth	N5	noun
+手	て	hand	N5	noun
+足	あし	foot; leg	N5	noun
+何	なに	what	N5	noun
+誰	だれ	who	N5	noun
+どこ	どこ	where	N5	noun
+いつ	いつ	when	N5	noun
+どうして	どうして	why	N5	noun
+どう	どう	how	N5	noun
+いくら	いくら	how much	N5	noun
+行く	いく	to go	N5	verb
+来る	くる	to come	N5	verb
+帰る	かえる	to return home	N5	verb
+食べる	たべる	to eat	N5	verb
+飲む	のむ	to drink	N5	verb
+見る	みる	to see; to watch	N5	verb
+聞く	きく	to hear; to listen	N5	verb
+話す	はなす	to speak	N5	verb
+読む	よむ	to read	N5	verb
+書く	かく	to write	N5	verb
+買う	かう	to buy	N5	verb
+売る	うる	to sell	N5	verb
+使う	つかう	to use	N5	verb
+作る	つくる	to make	N5	verb
+起きる	おきる	to wake up	N5	verb
+寝る	ねる	to sleep	N5	verb
+立つ	たつ	to stand	N5	verb
+座る	すわる	to sit	N5	verb
+歩く	あるく	to walk	N5	verb
+走る	はしる	to run	N5	verb
+泳ぐ	およぐ	to swim	N5	verb
+待つ	まつ	to wait	N5	verb
+分かる	わかる	to understand	N5	verb
+知る	しる	to know	N5	verb
+ある	ある	to exist (inanimate)	N5	verb
+いる	いる	to exist (animate)	N5	verb
+する	する	to do	N5	verb
+勉強する	べんきょうする	to study	N5	verb
+洗う	あらう	to wash	N5	verb
+開ける	あける	to open	N5	verb
+閉める	しめる	to close	N5	verb
+いい	いい	good	N5	i-adjective
+悪い	わるい	bad	N5	i-adjective
+大きい	おおきい	big	N5	i-adjective
+小さい	ちいさい	small	N5	i-adjective
+新しい	あたらしい	new	N5	i-adjective
+古い	ふるい	old	N5	i-adjective
+高い	たかい	high; expensive	N5	i-adjective
+安い	やすい	cheap	N5	i-adjective
+暑い	あつい	hot (weather)	N5	i-adjective
+寒い	さむい	cold (weather)	N5	i-adjective
+熱い	あつい	hot (to touch)	N5	i-adjective
+冷たい	つめたい	cold (to touch)	N5	i-adjective
+おいしい	おいしい	delicious	N5	i-adjective
+忙しい	いそがしい	busy	N5	i-adjective
+楽しい	たのしい	fun	N5	i-adjective
+難しい	むずかしい	difficult	N5	i-adjective
+易しい	やさしい	easy	N5	i-adjective
+面白い	おもしろい	interesting	N5	i-adjective
+好き	すき	likeable; favorite	N5	na-adjective
+嫌い	きらい	disliked	N5	na-adjective
+元気	げんき	energetic; well	N5	na-adjective
+静か	しずか	quiet	N5	na-adjective
+有名	ゆうめい	famous	N5	na-adjective
+便利	べんり	convenient	N5	na-adjective
+きれい	きれい	pretty; clean	N5	na-adjective
+おはよう	おはよう	good morning	N5	expression
+こんにちは	こんにちは	hello	N5	expression
+こんばんは	こんばんは	good evening	N5	expression
+さようなら	さようなら	goodbye	N5	expression
+ありがとう	ありがとう	thank you	N5	expression
+すみません	すみません	excuse me; sorry	N5	expression
+お願いします	おねがいします	please	N5	expression
+働く	はたらく	to work	N4	verb
+教える	おしえる	to teach	N4	verb
+習う	ならう	to learn	N4	verb
+忘れる	わすれる	to forget	N4	verb
+覚える	おぼえる	to remember	N4	verb
+呼ぶ	よぶ	to call	N4	verb
+送る	おくる	to send	N4	verb
+届ける	とどける	to deliver	N4	verb
+貸す	かす	to lend	N4	verb
+借りる	かりる	to borrow	N4	verb
+返す	かえす	to return something	N4	verb
+渡す	わたす	to hand over	N4	verb
+続ける	つづける	to continue	N4	verb
+始める	はじめる	to begin	N4	verb
+終わる	おわる	to end	N4	verb
+決める	きめる	to decide	N4	verb
+考える	かんがえる	to think	N4	verb
+思う	おもう	to think; to feel	N4	verb
+感じる	かんじる	to feel	N4	verb
+運転する	うんてんする	to drive	N4	verb
+案内する	あんないする	to guide	N4	verb
+予約する	よやくする	to reserve	N4	verb
+相談する	そうだんする	to consult	N4	verb
+参加する	さんかする	to participate	N4	verb
+準備する	じゅんびする	to prepare	N4	verb
+説明する	せつめいする	to explain	N4	verb
+招待する	しょうたいする	to invite	N4	verb
+到着する	とうちゃくする	to arrive	N4	verb
+出発する	しゅっぱつする	to depart	N4	verb
+遅れる	おくれる	to be late	N4	verb
+急ぐ	いそぐ	to hurry	N4	verb
+触る	さわる	to touch	N4	verb
+選ぶ	えらぶ	to choose	N4	verb
+比べる	くらべる	to compare	N4	verb
+変える	かえる	to change (something)	N4	verb
+変わる	かわる	to change (itself)	N4	verb
+増える	ふえる	to increase	N4	verb
+減る	へる	to decrease	N4	verb
+育てる	そだてる	to raise; to nurture	N4	verb
+育つ	そだつ	to grow up	N4	verb
+死ぬ	しぬ	to die	N4	verb
+生まれる	うまれる	to be born	N4	verb
+泣く	なく	to cry	N4	verb
+笑う	わらう	to laugh	N4	verb
+怒る	おこる	to get angry	N4	verb
+驚く	おどろく	to be surprised	N4	verb
+心配する	しんぱいする	to worry	N4	verb
+信じる	しんじる	to believe	N4	verb
+疑う	うたがう	to doubt	N4	verb
+頑張る	がんばる	to do one's best	N4	verb
+直す	なおす	to fix	N4	verb
+壊す	こわす	to break something	N4	verb
+壊れる	こわれる	to break (itself)	N4	verb
+治る	なおる	to heal	N4	verb
+冷える	ひえる	to get cold	N4	verb
+温める	あたためる	to warm	N4	verb
+沸かす	わかす	to boil	N4	verb
+焼く	やく	to grill; to bake	N4	verb
+切る	きる	to cut	N4	verb
+割る	わる	to split	N4	verb
+包む	つつむ	to wrap	N4	verb
+描く	かく	to draw	N4	verb
+撮る	とる	to take (a photo)	N4	verb
+押す	おす	to push	N4	verb
+引く	ひく	to pull	N4	verb
+掛ける	かける	to hang; to put on	N4	verb
+拾う	ひろう	to pick up	N4	verb
+捨てる	すてる	to throw away	N4	verb
+探す	さがす	to search	N4	verb
+見つける	みつける	to find	N4	verb
+気を付ける	きをつける	to be careful	N4	verb
+助ける	たすける	to help	N4	verb
+手伝う	てつだう	to help; to assist	N4	verb
+頼む	たのむ	to ask a favor	N4	verb
+断る	ことわる	to refuse	N4	verb
+許す	ゆるす	to forgive; to allow	N4	verb
+謝る	あやまる	to apologize	N4	verb
+褒める	ほめる	to praise	N4	verb
+叱る	しかる	to scold	N4	verb
+天気	てんき	weather	N4	noun
+気温	きおん	temperature	N4	noun
+雨	あめ	rain	N4	noun
+雪	ゆき	snow	N4	noun
+風	かぜ	wind	N4	noun
+台風	たいふう	typhoon	N4	noun
+空	そら	sky	N4	noun
+山	やま	mountain	N4	noun
+川	かわ	river	N4	noun
+海	うみ	sea	N4	noun
+森	もり	forest	N4	noun
+空気	くうき	air	N4	noun
+世界	せかい	world	N4	noun
+地図	ちず	map	N4	noun
+旅行	りょこう	travel	N4	noun
+経験	けいけん	experience	N4	noun
+趣味	しゅみ	hobby	N4	noun
+音楽	おんがく	music	N4	noun
+映画	えいが	movie	N4	noun
+絵	え	picture	N4	noun
+歌	うた	song	N4	noun
+写真	しゃしん	photo	N4	noun
+スポーツ	すぽーつ	sport	N4	noun
+試合	しあい	match; game	N4	noun
+大会	たいかい	tournament	N4	noun
+練習	れんしゅう	practice	N4	noun
+試験	しけん	exam	N4	noun
+宿題	しゅくだい	homework	N4	noun
+授業	じゅぎょう	class; lesson	N4	noun
+教室	きょうしつ	classroom	N4	noun
+大学	だいがく	university	N4	noun
+会議	かいぎ	meeting	N4	noun
+仕事	しごと	work; job	N4	noun
+職業	しょくぎょう	occupation	N4	noun
+社員	しゃいん	employee	N4	noun
+給料	きゅうりょう	salary	N4	noun
+生活	せいかつ	daily life	N4	noun
+予定	よてい	plan; schedule	N4	noun
+約束	やくそく	promise	N4	noun
+都合	つごう	convenience; circumstances	N4	noun
+用事	ようじ	errand; business	N4	noun
+機会	きかい	opportunity	N4	noun
+理由	りゆう	reason	N4	noun
+意味	いみ	meaning	N4	noun
+方法	ほうほう	method	N4	noun
+問題	もんだい	problem	N4	noun
+答え	こたえ	answer	N4	noun
+質問	しつもん	question	N4	noun
+説明	せつめい	explanation	N4	noun
+内容	ないよう	content	N4	noun
+目的	もくてき	purpose	N4	noun
+結果	けっか	result	N4	noun
+原因	げんいん	cause	N4	noun
+関係	かんけい	relationship	N4	noun
+態度	たいど	attitude	N4	noun
+性格	せいかく	personality	N4	noun
+気持ち	きもち	feeling	N4	noun
+気分	きぶん	mood	N4	noun
+心	こころ	heart; mind	N4	noun
+力	ちから	power; strength	N4	noun
+声	こえ	voice	N4	noun
+音	おと	sound	N4	noun
+匂い	におい	smell	N4	noun
+味	あじ	taste	N4	noun
+色	いろ	color	N4	noun
+形	かたち	shape	N4	noun
+大きさ	おおきさ	size	N4	noun
+重さ	おもさ	weight	N4	noun
+長さ	ながさ	length	N4	noun
+高さ	たかさ	height	N4	noun
+広さ	ひろさ	area; spaciousness	N4	noun
+不便	ふべん	inconvenient	N4	na-adjective
+簡単	かんたん	simple	N4	na-adjective
+複雑	ふくざつ	complex	N4	na-adjective
+大切	たいせつ	important	N4	na-adjective
+大事	だいじ	important	N4	na-adjective
+必要	ひつよう	necessary	N4	na-adjective
+十分	じゅうぶん	enough	N4	na-adjective
+特別	とくべつ	special	N4	na-adjective
+普通	ふつう	normal	N4	na-adjective
+危険	きけん	dangerous	N4	na-adjective
+安全	あんぜん	safe	N4	na-adjective
+自由	じゆう	free	N4	na-adjective
+熱心	ねっしん	enthusiastic	N4	na-adjective
+親切	しんせつ	kind	N4	na-adjective
+丁寧	ていねい	polite	N4	na-adjective
+正直	しょうじき	honest	N4	na-adjective
+真面目	まじめ	serious; diligent	N4	na-adjective
+上手	じょうず	skillful	N4	na-adjective
+下手	へた	unskillful	N4	na-adjective
+得意	とくい	good at	N4	na-adjective
+苦手	にがて	bad at; weak point	N4	na-adjective
+若い	わかい	young	N4	i-adjective
+明るい	あかるい	bright	N4	i-adjective
+暗い	くらい	dark	N4	i-adjective
+強い	つよい	strong	N4	i-adjective
+弱い	よわい	weak	N4	i-adjective
+早い	はやい	early	N4	i-adjective
+速い	はやい	fast	N4	i-adjective
+遅い	おそい	slow; late	N4	i-adjective
+遠い	とおい	far	N4	i-adjective
+近い	ちかい	near	N4	i-adjective
+深い	ふかい	deep	N4	i-adjective
+浅い	あさい	shallow	N4	i-adjective
+太い	ふとい	thick	N4	i-adjective
+細い	ほそい	thin	N4	i-adjective
+重い	おもい	heavy	N4	i-adjective
+軽い	かるい	light (weight)	N4	i-adjective
+広い	ひろい	spacious	N4	i-adjective
+狭い	せまい	narrow	N4	i-adjective
+汚い	きたない	dirty	N4	i-adjective
+優しい	やさしい	gentle; kind	N4	i-adjective
+厳しい	きびしい	strict	N4	i-adjective
+恥ずかしい	はずかしい	embarrassing	N4	i-adjective
+寂しい	さびしい	lonely	N4	i-adjective
+悲しい	かなしい	sad	N4	i-adjective
+嬉しい	うれしい	happy	N4	i-adjective
+痛い	いたい	painful	N4	i-adjective
+眠い	ねむい	sleepy	N4	i-adjective
+危ない	あぶない	dangerous	N4	i-adjective
+社会	しゃかい	society	N3	noun
+政治	せいじ	politics	N3	noun
+経済	けいざい	economy	N3	noun
+文化	ぶんか	culture	N3	noun
+歴史	れきし	history	N3	noun
+伝統	でんとう	tradition	N3	noun
+環境	かんきょう	environment	N3	noun
+自然	しぜん	nature	N3	noun
+資源	しげん	resources	N3	noun
+技術	ぎじゅつ	technology	N3	noun
+科学	かがく	science	N3	noun
+情報	じょうほう	information	N3	noun
+資料	しりょう	materials; data	N3	noun
+制度	せいど	system; institution	N3	noun
+政府	せいふ	government	N3	noun
+法律	ほうりつ	law	N3	noun
+権利	けんり	right (entitlement)	N3	noun
+義務	ぎむ	duty	N3	noun
+責任	せきにん	responsibility	N3	noun
+立場	たちば	standpoint	N3	noun
+印象	いんしょう	impression	N3	noun
+評価	ひょうか	evaluation	N3	noun
+判断	はんだん	judgment	N3	noun
+決定	けってい	decision	N3	noun
+意見	いけん	opinion	N3	noun
+主張	しゅちょう	assertion	N3	noun
+議論	ぎろん	discussion	N3	noun
+討論	とうろん	debate	N3	noun
+交渉	こうしょう	negotiation	N3	noun
+契約	けいやく	contract	N3	noun
+取引	とりひき	transaction	N3	noun
+商品	しょうひん	product	N3	noun
+製品	せいひん	manufactured product	N3	noun
+商売	しょうばい	business; trade	N3	noun
+産業	さんぎょう	industry	N3	noun
+農業	のうぎょう	agriculture	N3	noun
+工業	こうぎょう	manufacturing industry	N3	noun
+貿易	ぼうえき	trade (international)	N3	noun
+輸出	ゆしゅつ	export	N3	noun
+輸入	ゆにゅう	import	N3	noun
+生産	せいさん	production	N3	noun
+消費	しょうひ	consumption	N3	noun
+需要	じゅよう	demand	N3	noun
+供給	きょうきゅう	supply	N3	noun
+競争	きょうそう	competition	N3	noun
+発展	はってん	development	N3	noun
+成長	せいちょう	growth	N3	noun
+進歩	しんぽ	progress	N3	noun
+改善	かいぜん	improvement	N3	noun
+変化	へんか	change	N3	noun
+影響	えいきょう	influence	N3	noun
+効果	こうか	effect	N3	noun
+傾向	けいこう	tendency	N3	noun
+現象	げんしょう	phenomenon	N3	noun
+状況	じょうきょう	situation	N3	noun
+状態	じょうたい	state; condition	N3	noun
+場合	ばあい	case; situation	N3	noun
+条件	じょうけん	condition; requirement	N3	noun
+基準	きじゅん	standard	N3	noun
+標準	ひょうじゅん	standard	N3	noun
+平均	へいきん	average	N3	noun
+割合	わりあい	proportion	N3	noun
+比率	ひりつ	ratio	N3	noun
+程度	ていど	degree; extent	N3	noun
+範囲	はんい	scope; range	N3	noun
+限界	げんかい	limit	N3	noun
+対象	たいしょう	target; object	N3	noun
+対応	たいおう	correspondence; response	N3	noun
+対策	たいさく	countermeasure	N3	noun
+手段	しゅだん	means	N3	noun
+手続き	てつづき	procedure	N3	noun
+過程	かてい	process	N3	noun
+段階	だんかい	stage	N3	noun
+期間	きかん	period	N3	noun
+期限	きげん	deadline	N3	noun
+締め切り	しめきり	deadline	N3	noun
+予算	よさん	budget	N3	noun
+費用	ひよう	expenses	N3	noun
+経費	けいひ	expenses (business)	N3	noun
+収入	しゅうにゅう	income	N3	noun
+支出	ししゅつ	expenditure	N3	noun
+損	そん	loss	N3	noun
+得	とく	gain; profit	N3	noun
+利益	りえき	profit	N3	noun
+損失	そんしつ	financial loss	N3	noun
+価値	かち	value	N3	noun
+価格	かかく	price	N3	noun
+税金	ぜいきん	tax	N3	noun
+給与	きゅうよ	salary	N3	noun
+労働	ろうどう	labor	N3	noun
+雇用	こよう	employment	N3	noun
+採用	さいよう	hiring; adoption	N3	noun
+退職	たいしょく	retirement	N3	noun
+昇進	しょうしん	promotion	N3	noun
+転職	てんしょく	job change	N3	noun
+出張	しゅっちょう	business trip	N3	noun
+出勤	しゅっきん	going to work	N3	noun
+欠勤	けっきん	absence from work	N3	noun
+残業	ざんぎょう	overtime work	N3	noun
+休憩	きゅうけい	break; rest	N3	noun
+休暇	きゅうか	vacation; leave	N3	noun
+表す	あらわす	to express	N3	verb
+表現する	ひょうげんする	to express	N3	verb
+述べる	のべる	to state	N3	verb
+提案する	ていあんする	to propose	N3	verb
+提出する	ていしゅつする	to submit	N3	verb
+提供する	ていきょうする	to provide	N3	verb
+検討する	けんとうする	to examine; to consider	N3	verb
+確認する	かくにんする	to confirm	N3	verb
+確かめる	たしかめる	to make sure	N3	verb
+調べる	しらべる	to investigate	N3	verb
+調査する	ちょうさする	to survey	N3	verb
+分析する	ぶんせきする	to analyze	N3	verb
+判断する	はんだんする	to judge	N3	verb
+評価する	ひょうかする	to evaluate	N3	verb
+想像する	そうぞうする	to imagine	N3	verb
+予想する	よそうする	to predict	N3	verb
+期待する	きたいする	to expect	N3	verb
+実現する	じつげんする	to realize; to actualize	N3	verb
+達成する	たっせいする	to achieve	N3	verb
+成功する	せいこうする	to succeed	N3	verb
+失敗する	しっぱいする	to fail	N3	verb
+挑戦する	ちょうせんする	to challenge	N3	verb
+努力する	どりょくする	to make an effort	N3	verb
+我慢する	がまんする	to endure	N3	verb
+諦める	あきらめる	to give up	N3	verb
+解決する	かいけつする	to resolve	N3	verb
+解消する	かいしょうする	to eliminate; to cancel	N3	verb
+解釈する	かいしゃくする	to interpret	N3	verb
+理解する	りかいする	to understand	N3	verb
+誤解する	ごかいする	to misunderstand	N3	verb
+反対する	はんたいする	to oppose	N3	verb
+賛成する	さんせいする	to agree	N3	verb
+協力する	きょうりょくする	to cooperate	N3	verb
+支援する	しえんする	to support	N3	verb
+支持する	しじする	to support; to endorse	N3	verb
+応援する	おうえんする	to cheer for	N3	verb
+依頼する	いらいする	to request	N3	verb
+要求する	ようきゅうする	to demand	N3	verb
+要請する	ようせいする	to request formally	N3	verb
+命令する	めいれいする	to order	N3	verb
+指示する	しじする	to instruct	N3	verb
+禁止する	きんしする	to forbid	N3	verb
+許可する	きょかする	to permit	N3	verb
+承認する	しょうにんする	to approve	N3	verb
+拒否する	きょひする	to refuse	N3	verb
+中止する	ちゅうしする	to cancel; to stop	N3	verb
+延期する	えんきする	to postpone	N3	verb
+継続する	けいぞくする	to continue	N3	verb
+維持する	いじする	to maintain	N3	verb
+保つ	たもつ	to maintain	N3	verb
+保存する	ほぞんする	to preserve	N3	verb
+保護する	ほごする	to protect	N3	verb
+守る	まもる	to protect; to keep	N3	verb
+従う	したがう	to follow; to obey	N3	verb
+逆らう	さからう	to go against	N3	verb
+支える	ささえる	to support (physically/emotionally)	N3	verb
+頼る	たよる	to rely on	N3	verb
+信頼する	しんらいする	to trust	N3	verb
+恐れる	おそれる	to fear	N3	verb
+悩む	なやむ	to worry; to agonize	N3	verb
+苦しむ	くるしむ	to suffer	N3	verb
+慣れる	なれる	to get used to	N3	verb
+適応する	てきおうする	to adapt	N3	verb
+対応する	たいおうする	to respond; to deal with	N3	verb
+反応する	はんのうする	to react	N3	verb
+反映する	はんえいする	to reflect	N3	verb
+影響する	えいきょうする	to influence	N3	verb
+関係する	かんけいする	to relate to	N3	verb
+関連する	かんれんする	to be related	N3	verb
+含む	ふくむ	to include	N3	verb
+除く	のぞく	to exclude	N3	verb
+加える	くわえる	to add	N3	verb
+追加する	ついかする	to add more	N3	verb
+増加する	ぞうかする	to increase	N3	verb
+減少する	げんしょうする	to decrease	N3	verb
+増やす	ふやす	to increase (something)	N3	verb
+減らす	へらす	to decrease (something)	N3	verb
+具体的	ぐたいてき	concrete	N3	na-adjective
+抽象的	ちゅうしょうてき	abstract	N3	na-adjective
+積極的	せっきょくてき	positive; proactive	N3	na-adjective
+消極的	しょうきょくてき	passive	N3	na-adjective
+効果的	こうかてき	effective	N3	na-adjective
+一般的	いっぱんてき	general	N3	na-adjective
+個人的	こじんてき	personal	N3	na-adjective
+社会的	しゃかいてき	social	N3	na-adjective
+経済的	けいざいてき	economic	N3	na-adjective
+精神的	せいしんてき	mental	N3	na-adjective
+肉体的	にくたいてき	physical	N3	na-adjective
+基本的	きほんてき	basic	N3	na-adjective
+代表的	だいひょうてき	representative	N3	na-adjective
+部分的	ぶぶんてき	partial	N3	na-adjective
+全体的	ぜんたいてき	overall	N3	na-adjective
+印象的	いんしょうてき	impressive	N3	na-adjective
+魅力的	みりょくてき	attractive	N3	na-adjective
+現実的	げんじつてき	realistic	N3	na-adjective
+理想的	りそうてき	ideal	N3	na-adjective
+論理的	ろんりてき	logical	N3	na-adjective
+客観的	きゃっかんてき	objective	N3	na-adjective
+主観的	しゅかんてき	subjective	N3	na-adjective
+適切	てきせつ	appropriate	N3	na-adjective
+正確	せいかく	accurate	N3	na-adjective
+詳細	しょうさい	detailed	N3	na-adjective
+単純	たんじゅん	simple	N3	na-adjective
+曖昧	あいまい	ambiguous	N3	na-adjective
+明確	めいかく	clear	N3	na-adjective
+不十分	ふじゅうぶん	insufficient	N3	na-adjective
+豊か	ゆたか	rich; abundant	N3	na-adjective
+貧しい	まずしい	poor	N3	i-adjective
+幸せ	しあわせ	happy	N3	na-adjective
+不安	ふあん	anxious	N3	na-adjective
+快適	かいてき	comfortable	N3	na-adjective
+深刻	しんこく	serious	N3	na-adjective
+重大	じゅうだい	grave; serious	N3	na-adjective
+貴重	きちょう	precious	N3	na-adjective
+大幅	おおはば	large-scale	N3	na-adjective
+急激	きゅうげき	rapid	N3	na-adjective
+巨大	きょだい	huge	N3	na-adjective
+膨大	ぼうだい	enormous	N3	na-adjective

@@ -22,6 +22,7 @@ pub mod logging;
 pub mod model;
 pub mod pronunciation;
 pub mod repositories;
+pub mod seed;
 pub mod srs;
 pub mod tts;
 
@@ -35,6 +36,7 @@ pub use installer::{install_jmdict, install_kanjidic};
 pub use language::{InstallationStatus, Language, LanguageInfo, LanguageManager, LanguageRegistry};
 pub use logging::init_logging;
 pub use model::{Meaning, Reading, Word};
+pub use seed::{ja_school_vocabulary_len, seed_ja_school_vocabulary};
 pub use pronunciation::{
     levenshtein_distance, score_pronunciation, score_pronunciation_tier2, segment_units, PronunciationResult,
     PronunciationScorer,

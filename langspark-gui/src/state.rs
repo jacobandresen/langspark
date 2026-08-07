@@ -37,6 +37,24 @@ impl AppState {
         let db = Database::open(db_path)?;
         initialize_schema(&db.conn())?;
         run_migrations(&mut db.conn(), &default_migrations())?;
+
+        // First-run seed: an empty Japanese vocabulary table (a brand new
+        // database, or an existing one where the user simply hasn't added
+        // Japanese words yet) gets the standard JLPT N5-N3 school vocabulary
+        // pre-populated, each with a ready-to-review SRS card, so the
+        // Vocabulary/Review tabs aren't empty on first launch. Only runs
+        // once per database: after this, the table is no longer empty.
+        if active_language == Language::Japanese {
+            let ja_count: i64 =
+                db.conn().query_row("SELECT COUNT(*) FROM vocabulary WHERE language = 'ja'", [], |r| r.get(0))?;
+            if ja_count == 0 {
+                match langspark_core::seed_ja_school_vocabulary(&db) {
+                    Ok(n) => log::info!("seeded {n} Japanese school vocabulary words on first run"),
+                    Err(e) => log::warn!("failed to seed Japanese school vocabulary: {e}"),
+                }
+            }
+        }
+
         let db = Arc::new(db);
 
         let language_manager = LanguageManager::new(active_language);
@@ -126,7 +144,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_open_creates_database_and_loads_empty_tab_data() {
+    fn test_open_seeds_japanese_school_vocabulary_on_first_run() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("nested").join("langspark.db");
 
@@ -134,11 +152,36 @@ mod tests {
         assert!(db_path.exists());
 
         let data = state.load_tab_data().unwrap();
+        // First-run seed: a fresh Japanese database gets the standard JLPT
+        // N5-N3 school vocabulary pre-populated, each with a due SRS card
+        // (see AppState::open / langspark_core::seed_ja_school_vocabulary).
+        let expected = langspark_core::ja_school_vocabulary_len();
+        assert_eq!(data.vocabulary.len(), expected);
+        assert_eq!(data.due_cards.len(), expected);
+        assert!(data.kanji.is_empty());
+        assert_eq!(data.stats.total_reviews, 0);
+        assert!(!state.dictionary.is_loaded("ja"));
+
+        // Re-opening the same database must not seed a second time.
+        drop(state);
+        let state = AppState::open(&db_path, Language::Japanese, None).unwrap();
+        assert_eq!(state.load_tab_data().unwrap().vocabulary.len(), expected);
+    }
+
+    #[test]
+    fn test_open_creates_database_with_empty_tab_data_for_spanish() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("nested").join("langspark.db");
+
+        let state = AppState::open(&db_path, Language::Spanish, None).unwrap();
+        assert!(db_path.exists());
+
+        // Spanish has no seed vocabulary (the school list is Japanese-only).
+        let data = state.load_tab_data().unwrap();
         assert!(data.vocabulary.is_empty());
         assert!(data.kanji.is_empty());
         assert!(data.due_cards.is_empty());
         assert_eq!(data.stats.total_reviews, 0);
-        assert!(!state.dictionary.is_loaded("ja"));
     }
 
     #[test]

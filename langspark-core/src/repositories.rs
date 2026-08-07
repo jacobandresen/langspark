@@ -398,10 +398,13 @@ impl SqliteSrsRepository {
         let conn = self.db.conn();
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         
+        // A NULL next_review_date means "never reviewed" — SrsCard::is_due_today()
+        // treats that as always due, so the SQL must match rather than silently
+        // excluding it (date(NULL) <= date(?) is NULL, i.e. false, in SQLite).
         let mut stmt = conn.prepare(
             "SELECT id, vocab_id, kanji_id, card_type, state, repetitions, ease_factor, interval_days, next_review_date, last_reviewed, language, created_at, stability, difficulty
              FROM srs_cards
-             WHERE language = ? AND date(next_review_date) <= date(?)
+             WHERE language = ? AND (next_review_date IS NULL OR date(next_review_date) <= date(?))
              ORDER BY next_review_date ASC",
         )?;
         
@@ -811,6 +814,22 @@ mod tests {
         assert!(repo.get_card_by_id(id).is_ok());
         repo.delete(id).unwrap();
         assert!(repo.get_card_by_id(id).is_err());
+    }
+
+    #[test]
+    fn test_get_due_cards_includes_never_reviewed_cards() {
+        // A brand-new card has next_review_date = NULL ("never reviewed"),
+        // which SrsCard::is_due_today() treats as always due — get_due_cards
+        // must agree, not silently exclude NULL rows (see repositories.rs).
+        let (db, _temp) = setup_db();
+        let repo = SqliteSrsRepository::new(db);
+        let new_card = SrsCard::new("vocabulary", "ja");
+        assert!(new_card.next_review_date.is_none());
+        repo.create(&new_card).unwrap();
+
+        let due = repo.get_due_cards("ja").unwrap();
+        assert_eq!(due.len(), 1);
+        assert!(due[0].next_review_date.is_none());
     }
 
     #[test]
