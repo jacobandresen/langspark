@@ -19,12 +19,17 @@ pub struct AppState {
     pub srs_repo: SqliteSrsRepository,
     pub deck_repo: SqliteDeckRepository,
     pub review_repo: SqliteReviewRepository,
+    /// Dictionary for the active language, loaded from `dict_dir` (see
+    /// `AppDirs::dictionaries_dir`) if a matching `<code>.json` file exists.
+    /// Empty (nothing loaded) if no dictionary has been installed yet.
+    pub dictionary: langspark_core::DictionaryManager,
 }
 
 impl AppState {
     /// Open (creating if necessary) the database at `db_path` and wire up
-    /// every repository for `active_language`.
-    pub fn open(db_path: &Path, active_language: Language) -> anyhow::Result<Self> {
+    /// every repository for `active_language`. If `dict_dir` is given and
+    /// contains `<active_language code>.json`, the dictionary is loaded too.
+    pub fn open(db_path: &Path, active_language: Language, dict_dir: Option<&Path>) -> anyhow::Result<Self> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -32,13 +37,17 @@ impl AppState {
         initialize_schema(&db.conn())?;
         let db = Arc::new(db);
 
+        let language_manager = LanguageManager::new(active_language);
+        let dictionary = load_dictionary(dict_dir, language_manager.get_active_code());
+
         Ok(Self {
-            language_manager: LanguageManager::new(active_language),
+            language_manager,
             vocabulary_repo: SqliteVocabularyRepository::new(db.clone()),
             kanji_repo: SqliteKanjiRepository::new(db.clone()),
             srs_repo: SqliteSrsRepository::new(db.clone()),
             deck_repo: SqliteDeckRepository::new(db.clone()),
             review_repo: SqliteReviewRepository::new(db),
+            dictionary,
         })
     }
 
@@ -81,6 +90,26 @@ impl AppState {
     }
 }
 
+/// Load the dictionary for `language_code` from `<dict_dir>/<language_code>.json`,
+/// if present. Missing file or parse failure just leaves the dictionary empty
+/// (the "Add Word" UI stays disabled) rather than failing startup.
+fn load_dictionary(dict_dir: Option<&Path>, language_code: &str) -> langspark_core::DictionaryManager {
+    let mut manager = langspark_core::DictionaryManager::new();
+    let Some(dir) = dict_dir else { return manager };
+    let path = dir.join(format!("{language_code}.json"));
+    let Ok(json) = std::fs::read_to_string(&path) else { return manager };
+
+    let result = match language_code {
+        "ja" => manager.load_japanese(&json, None),
+        "es" => manager.load_spanish(&json, None),
+        _ => Ok(()),
+    };
+    if let Err(e) = result {
+        log::warn!("failed to parse dictionary at {}: {e}", path.display());
+    }
+    manager
+}
+
 /// Bundle of everything loaded from the database for populating tabs at startup.
 pub struct TabData {
     pub vocabulary: Vec<langspark_core::VocabularyEntry>,
@@ -99,7 +128,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("nested").join("langspark.db");
 
-        let state = AppState::open(&db_path, Language::Japanese).unwrap();
+        let state = AppState::open(&db_path, Language::Japanese, None).unwrap();
         assert!(db_path.exists());
 
         let data = state.load_tab_data().unwrap();
@@ -107,12 +136,29 @@ mod tests {
         assert!(data.kanji.is_empty());
         assert!(data.due_cards.is_empty());
         assert_eq!(data.stats.total_reviews, 0);
+        assert!(!state.dictionary.is_loaded("ja"));
     }
 
     #[test]
     fn test_open_respects_kanji_support() {
         let dir = tempfile::tempdir().unwrap();
-        let state = AppState::open(&dir.path().join("langspark.db"), Language::Spanish).unwrap();
+        let state = AppState::open(&dir.path().join("langspark.db"), Language::Spanish, None).unwrap();
         assert!(!state.language_manager.supports_kanji());
+    }
+
+    #[test]
+    fn test_open_loads_dictionary_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let dict_dir = dir.path().join("dictionaries");
+        std::fs::create_dir_all(&dict_dir).unwrap();
+        std::fs::write(
+            dict_dir.join("ja.json"),
+            r#"{"words": [{"id": "1", "kanji": [], "kana": [{"text": "たべる"}], "sense": [{"gloss": [{"lang": "eng", "text": "to eat"}]}]}]}"#,
+        )
+        .unwrap();
+
+        let state = AppState::open(&dir.path().join("langspark.db"), Language::Japanese, Some(&dict_dir)).unwrap();
+        assert!(state.dictionary.is_loaded("ja"));
+        assert_eq!(state.dictionary.search("ja", "eat").len(), 1);
     }
 }

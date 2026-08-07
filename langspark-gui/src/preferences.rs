@@ -235,9 +235,75 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
     let install_group = adw::PreferencesGroup::builder().title("Language Installation").build();
     for lang in registry.get_available_languages() {
         if let Some(meta) = registry.get_metadata(lang) {
-            let row = adw::ActionRow::builder().title(meta.display_name).subtitle("Not installed").build();
-            let install_btn = gtk4::Button::builder().label("Install").valign(gtk4::Align::Center).build();
-            row.add_suffix(&install_btn);
+            let dict_dir = settings
+                .borrow()
+                .dictionary_data_dir
+                .clone()
+                .or_else(|| crate::config::AppDirs::new().map(|d| d.dictionaries_dir()));
+            let already_installed =
+                dict_dir.as_ref().is_some_and(|d| d.join(format!("{}.json", meta.code)).exists());
+
+            let row = adw::ActionRow::builder()
+                .title(meta.display_name)
+                .subtitle(if already_installed { "Installed" } else { "Not installed" })
+                .build();
+
+            if meta.code == "ja" {
+                let install_btn = gtk4::Button::builder().label("Install").valign(gtk4::Align::Center).build();
+                install_btn.set_sensitive(!already_installed);
+                row.add_suffix(&install_btn);
+
+                install_btn.connect_clicked(glib::clone!(
+                    #[weak]
+                    row,
+                    #[weak]
+                    install_btn,
+                    move |_| {
+                        let Some(dict_dir) = dict_dir.clone() else {
+                            row.set_subtitle("Couldn't determine dictionary data directory");
+                            return;
+                        };
+                        install_btn.set_sensitive(false);
+                        row.set_subtitle("Installing\u{2026}");
+
+                        crate::task::spawn_on_main(glib::clone!(
+                            #[weak]
+                            row,
+                            #[weak]
+                            install_btn,
+                            async move {
+                                let jmdict_dest = dict_dir.join("ja.json");
+                                let kanjidic_dest = dict_dir.join("kanjidic.json");
+
+                                let result = crate::task::run_blocking(move || {
+                                    langspark_core::install_jmdict(&jmdict_dest, &|_, _| {})
+                                        .and_then(|v| langspark_core::install_kanjidic(&kanjidic_dest, &|_, _| {}).map(|_| v))
+                                })
+                                .await;
+
+                                match result {
+                                    Ok(version) => {
+                                        row.set_subtitle(&format!("Installed (JMdict {version})"));
+                                    }
+                                    Err(e) => {
+                                        row.set_subtitle(&format!("Install failed: {e}"));
+                                        install_btn.set_sensitive(true);
+                                    }
+                                }
+                            }
+                        ));
+                    }
+                ));
+            } else {
+                let install_btn = gtk4::Button::builder().label("Install").valign(gtk4::Align::Center).build();
+                install_btn.set_sensitive(false);
+                install_btn.set_tooltip_text(Some(
+                    "No automated installer available for this language yet — there's no maintained JSON \
+                     dictionary export to download from. See dictionary.rs for the manual format.",
+                ));
+                row.add_suffix(&install_btn);
+            }
+
             install_group.add(&row);
         }
     }

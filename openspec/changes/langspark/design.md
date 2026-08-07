@@ -105,14 +105,14 @@ Constraints:
 
 ### Text-to-Speech: VOICEVOX
 
-**Decision:** Use VOICEVOX via `voicevox_core` Rust crate for TTS.
+**Decision:** Use VOICEVOX for Japanese TTS, but not via the `voicevox_core` Rust crate as originally planned — it isn't published to crates.io, and the one `voicevox-rs` crate on crates.io fails to compile (broken upstream). Instead, `tts.rs::VoicevoxTts` speaks directly to a **locally-running VOICEVOX Engine** over its HTTP API (`ureq`, default `http://127.0.0.1:50021`). LangSpark does not bundle or download VOICEVOX itself — the user runs the Engine separately (e.g. via `scripts/setup-voicevox.sh`, which sets it up as a Docker container).
 
 **Rationale:**
-- Native Rust API
 - High-quality neural voices specifically for Japanese
 - Open source with active development
 - Supports multiple speakers/voices
 - Can generate audio on-demand or cache for offline use
+- HTTP API avoids the broken/unpublished Rust binding situation entirely, at the cost of requiring a separately-running process
 
 **Alternatives considered:**
 - Piper: Good multi-language support, but Japanese quality not as good
@@ -322,13 +322,13 @@ jv/
 1. User runs application for first time
 2. Application checks for dictionary files in `~/.local/share/jv/`
 3. If missing, prompt to download (or use bundled minimal set)
-4. Check for VOICEVOX models, prompt to download
+4. Check whether a VOICEVOX Engine is reachable at the configured URL (default `http://127.0.0.1:50021`); if not, point the user at `scripts/setup-voicevox.sh` — no VOICEVOX models are downloaded by the app itself, since it speaks to an externally-run Engine process (see "Text-to-Speech: VOICEVOX")
 5. Check for qwen3 ASR model, prompt to download
 6. Initialize SQLite database with default schema
 
 ### Data Locations
 - Dictionary files: `~/.local/share/jv/dictionaries/`
-- VOICEVOX models: `~/.local/share/jv/voicevox/`
+- VOICEVOX: none — no models are stored locally; the app is a client of an externally-run VOICEVOX Engine (see "Text-to-Speech: VOICEVOX")
 - qwen3 models: `~/.local/share/jv/asr/`
 - SQLite database: `~/.local/share/jv/jv.db`
 - User audio cache: `~/.cache/jv/audio/`
@@ -342,7 +342,7 @@ jv/
 ## Open Questions
 
 1. **Model distribution:** Should VOICEVOX, Piper, and qwen3 models be bundled with the application, downloaded on first run, or optional add-ons?
-   - Current plan: Download on first run with progress, allow skipping (reduced functionality). Download per-language models only when language is selected.
+   - Decided for VOICEVOX: neither bundled nor downloaded by LangSpark — the app is an HTTP client of a separately-run VOICEVOX Engine process (see "Text-to-Speech: VOICEVOX"), which the user starts themselves (`scripts/setup-voicevox.sh` automates a local Docker-based setup). Piper (Spanish) and qwen3 (ASR) remain undecided — no installer exists for either yet.
 
 2. **Audio caching:** Should generated TTS audio be cached permanently, temporarily, or not at all?
    - Current plan: Cache indefinitely, provide cache cleanup in preferences. Cache per-language.

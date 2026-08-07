@@ -3,11 +3,16 @@
 //! strip of cards with a "Show All" button that expands to a full grid.
 
 pub mod dialog;
+pub mod lookup;
 
-use gtk4::prelude::*;
+pub use lookup::AddWordCallbacks;
+
+use adw::prelude::*;
 use gtk4::{Box, FlowBox, Label, Orientation, Revealer, ScrolledWindow};
 use langspark_core::VocabularyEntry;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 /// A single vocabulary entry rendered as a clickable card.
 pub fn build_card(entry: &VocabularyEntry) -> gtk4::Button {
@@ -94,32 +99,42 @@ fn build_section(level: &str, entries: &[&VocabularyEntry]) -> gtk4::Box {
     section
 }
 
-/// Build the vocabulary tab's root widget: a search box followed by entries
-/// grouped by `level` (falling back to "Uncategorized"), each its own section.
-/// All entries are loaded up front (see `state::AppState`), so search/filter
-/// is done client-side by rebuilding the sections on each keystroke.
-pub fn build_tab(entries: &[VocabularyEntry]) -> gtk4::Widget {
+/// Build the vocabulary tab's root widget: a search box (plus an "Add Word"
+/// button when `add_word` is `Some`, i.e. a dictionary is installed for the
+/// active language) followed by entries grouped by `level` (falling back to
+/// "Uncategorized"), each its own section. All entries are loaded up front
+/// (see `state::AppState`), so search/filter is done client-side by
+/// rebuilding the sections on each keystroke. Words added via the dictionary
+/// lookup dialog are appended to the live list without a full rebuild.
+pub fn build_tab(entries: &[VocabularyEntry], add_word: Option<AddWordCallbacks>) -> gtk4::Widget {
     let root = Box::new(Orientation::Vertical, 12);
     root.set_margin_top(12);
     root.set_margin_bottom(12);
     root.set_margin_start(12);
     root.set_margin_end(12);
 
-    let search = gtk4::SearchEntry::builder().placeholder_text("Search word, reading, or meaning").build();
-    root.append(&search);
+    let search_row = Box::new(Orientation::Horizontal, 8);
+    let search = gtk4::SearchEntry::builder().placeholder_text("Search word, reading, or meaning").hexpand(true).build();
+    search_row.append(&search);
+    root.append(&search_row);
 
     let sections_box = Box::new(Orientation::Vertical, 12);
     root.append(&sections_box);
 
-    let entries = entries.to_vec();
+    let entries_state: Rc<RefCell<Vec<VocabularyEntry>>> = Rc::new(RefCell::new(entries.to_vec()));
+    let query_state: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+
     let render = glib::clone!(
         #[weak]
         sections_box,
+        #[strong]
+        entries_state,
         move |query: &str| {
             while let Some(child) = sections_box.first_child() {
                 sections_box.remove(&child);
             }
 
+            let entries = entries_state.borrow();
             let filtered = filter_entries(&entries, query);
             if filtered.is_empty() {
                 let message =
@@ -143,8 +158,43 @@ pub fn build_tab(entries: &[VocabularyEntry]) -> gtk4::Widget {
     search.connect_search_changed(glib::clone!(
         #[strong]
         render,
-        move |entry| render(&entry.text())
+        #[strong]
+        query_state,
+        move |entry| {
+            let text = entry.text().to_string();
+            *query_state.borrow_mut() = text.clone();
+            render(&text);
+        }
     ));
+
+    let append: Rc<dyn Fn(VocabularyEntry)> = Rc::new(glib::clone!(
+        #[strong]
+        entries_state,
+        #[strong]
+        query_state,
+        #[strong]
+        render,
+        move |new_entry: VocabularyEntry| {
+            entries_state.borrow_mut().push(new_entry);
+            render(&query_state.borrow());
+        }
+    ));
+
+    if let Some(add_word) = add_word {
+        let add_btn = gtk4::Button::builder().label("Add Word").valign(gtk4::Align::Center).build();
+        search_row.append(&add_btn);
+
+        add_btn.connect_clicked(glib::clone!(
+            #[strong]
+            add_word,
+            #[strong]
+            append,
+            move |btn| {
+                let dialog = lookup::build(add_word.clone(), append.clone());
+                dialog.present(Some(btn));
+            }
+        ));
+    }
 
     let scroller = ScrolledWindow::builder().child(&root).vexpand(true).build();
     scroller.upcast()

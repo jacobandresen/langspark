@@ -41,6 +41,11 @@ hound = "3.5"
 # instead we speak VOICEVOX Engine's local HTTP API directly with a minimal client.
 ureq = { version = "2", features = ["json"] }
 
+# Dictionary installer: downloads jmdict-simplified's .json.tgz release assets
+# and unpacks the JSON member.
+flate2 = "1.0"
+tar = "0.4"
+
 # TTS (Spanish and others) - ONNX runtime + espeak-ng phonemizer, no libtorch needed
 piper-rs = { version = "0.2", default-features = false }
 

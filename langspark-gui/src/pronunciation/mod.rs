@@ -143,10 +143,13 @@ impl PronunciationTab {
             callbacks,
             #[strong]
             waveform,
+            #[weak]
+            feedback_label,
             move |_| {
                 let Some(word) = words.get(index.get()).cloned() else { return };
                 let callbacks = callbacks.clone();
                 let waveform = waveform.clone();
+                feedback_label.set_label("");
                 task::spawn_on_main(async move {
                     let text = word.reading.clone().unwrap_or_else(|| word.text.clone());
                     let synth_result = task::run_blocking({
@@ -154,14 +157,19 @@ impl PronunciationTab {
                         move || (callbacks.synthesize)(&text)
                     })
                     .await;
-                    if let Ok(wav) = synth_result {
-                        if let Ok((samples, _rate)) = langspark_core::audio::decode_wav(&wav) {
-                            let downsampled = langspark_core::audio::extract_waveform(&samples, 200);
-                            waveform.set_samples(downsampled, WaveformColor::REFERENCE);
+                    match synth_result {
+                        Ok(wav) => {
+                            if let Ok((samples, _rate)) = langspark_core::audio::decode_wav(&wav) {
+                                let downsampled = langspark_core::audio::extract_waveform(&samples, 200);
+                                waveform.set_samples(downsampled, WaveformColor::REFERENCE);
+                            }
+                            let play_result = task::run_blocking(move || (callbacks.play)(wav)).await;
+                            if let Err(e) = play_result {
+                                feedback_label.set_label(&format!("Couldn't play reference audio: {e}"));
+                            }
                         }
-                        let play_result = task::run_blocking(move || (callbacks.play)(wav)).await;
-                        if let Err(e) = play_result {
-                            log::warn!("failed to play reference audio: {e}");
+                        Err(e) => {
+                            feedback_label.set_label(&format!("Couldn't generate reference audio: {e}"));
                         }
                     }
                 });

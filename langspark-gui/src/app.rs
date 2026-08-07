@@ -12,7 +12,7 @@ use adw::{
 };
 use gio::SimpleAction;
 use gtk4::Box as GtkBox;
-use langspark_core::Language;
+use langspark_core::{Language, TtsBackend};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -58,8 +58,9 @@ pub fn build_main_window(
     let view_stack = ViewStack::new();
     view_stack.set_vexpand(true);
 
-    let vocab_page =
-        view_stack.add_titled(&vocabulary::build_tab(&tab_data.vocabulary), Some("vocabulary"), "Vocabulary");
+    let add_word_callbacks = dictionary_add_word_callbacks(&state, active_language, &toast_overlay);
+    let vocab_widget = vocabulary::build_tab(&tab_data.vocabulary, add_word_callbacks);
+    let vocab_page = view_stack.add_titled(&vocab_widget, Some("vocabulary"), "Vocabulary");
     vocab_page.set_icon_name(Some("accessories-dictionary-symbolic"));
 
     let kanji_widget = kanji::build_tab(&tab_data.kanji);
@@ -95,7 +96,13 @@ pub fn build_main_window(
     let review_page = view_stack.add_titled(&review_session.root, Some("review"), "Review");
     review_page.set_icon_name(Some("view-refresh-symbolic"));
 
-    let pronunciation_tab = pronunciation::PronunciationTab::new(Vec::new(), unavailable_pronunciation_callbacks());
+    let practice_words: Vec<pronunciation::PracticeWord> = tab_data
+        .vocabulary
+        .iter()
+        .map(|entry| pronunciation::PracticeWord { text: entry.word.clone(), reading: entry.reading.clone() })
+        .collect();
+    let pronunciation_tab =
+        pronunciation::PronunciationTab::new(practice_words, pronunciation_callbacks(active_language, &settings.borrow()));
     let pronunciation_page =
         view_stack.add_titled(&pronunciation_tab.widget, Some("pronunciation"), "Pronunciation");
     pronunciation_page.set_icon_name(Some("audio-input-microphone-symbolic"));
@@ -130,7 +137,6 @@ pub fn build_main_window(
     let toolbar_view = ToolbarView::builder().content(&content).build();
     toolbar_view.add_top_bar(&header);
 
-    let toast_overlay = ToastOverlay::new();
     toast_overlay.set_child(Some(&toolbar_view));
     window.set_content(Some(&toast_overlay));
 
@@ -215,6 +221,69 @@ fn register_app_actions(app: &AdwApplication, window: &AdwApplicationWindow, set
     app.add_action(&preferences_action);
 }
 
+/// Build the "Add Word" callbacks for the vocabulary tab from the dictionary
+/// loaded into `state` (see `AppState::open`), or `None` if no dictionary is
+/// installed for `active_language` — the "Add Word" button then stays hidden
+/// until one is installed from Preferences > Language Installation.
+fn dictionary_add_word_callbacks(
+    state: &Arc<AppState>,
+    active_language: Language,
+    toast_overlay: &ToastOverlay,
+) -> Option<vocabulary::AddWordCallbacks> {
+    let code = active_language.code();
+    if !state.dictionary.is_loaded(code) {
+        return None;
+    }
+
+    let search: Rc<dyn Fn(&str) -> Vec<langspark_core::VocabEntry>> = {
+        let state = state.clone();
+        Rc::new(move |query: &str| state.dictionary.search(code, query).into_iter().cloned().collect())
+    };
+
+    let persist: Rc<
+        dyn Fn(langspark_core::VocabEntry, Box<dyn Fn(langspark_core::VocabularyEntry)>, Box<dyn Fn()>),
+    > = Rc::new(glib::clone!(
+        #[strong]
+        state,
+        #[weak]
+        toast_overlay,
+        move |dict_entry: langspark_core::VocabEntry,
+              on_done: Box<dyn Fn(langspark_core::VocabularyEntry)>,
+              on_error: Box<dyn Fn()>| {
+            let new_entry = langspark_core::VocabularyEntry {
+                id: None,
+                word: dict_entry.word.clone(),
+                reading: dict_entry.reading.clone(),
+                meaning: dict_entry.meanings.join("; "),
+                language: dict_entry.language.clone(),
+                level: dict_entry.level.clone(),
+                part_of_speech: dict_entry.part_of_speech.first().cloned(),
+                tags: None,
+                created_at: None,
+                updated_at: None,
+            };
+            let state = state.clone();
+            crate::task::spawn_on_main(async move {
+                let to_insert = new_entry.clone();
+                let result = crate::task::run_blocking(move || state.vocabulary_repo.create(&to_insert)).await;
+                match result {
+                    Ok(id) => {
+                        let mut persisted = new_entry;
+                        persisted.id = Some(id);
+                        on_done(persisted);
+                    }
+                    Err(e) => {
+                        diagnostics::show_error_toast(&toast_overlay, &format!("Failed to add word: {e}"));
+                        on_error();
+                    }
+                }
+            });
+        }
+    ));
+
+    Some(vocabulary::AddWordCallbacks { search, persist })
+}
+
 const HELP_TEXT: &str = "\
 Vocabulary & Kanji — Browse entries grouped by level. Click \"Show All\" to see \
 every entry in a section as a grid.
@@ -233,12 +302,81 @@ progress.
 Preferences — Change the active language (takes effect on restart), TTS \
 voices, SRS algorithm, theme, and audio devices.";
 
-fn unavailable_pronunciation_callbacks() -> pronunciation::PronunciationCallbacks {
+fn unavailable_pronunciation_callbacks(active_language: Language) -> pronunciation::PronunciationCallbacks {
+    let code = active_language.code();
     pronunciation::PronunciationCallbacks {
         synthesize: Box::new(|_| anyhow::bail!("no TTS backend configured yet — set one up in Preferences")),
         record: Box::new(|| anyhow::bail!("no microphone recording backend configured yet")),
         play: Box::new(|_| anyhow::bail!("no audio output backend configured yet")),
-        score: Box::new(|r, e| langspark_core::score_pronunciation(r, e, "ja")),
+        score: Box::new(move |r, e| langspark_core::score_pronunciation(r, e, code)),
+        transcribe: Box::new(|_, _| anyhow::bail!("speech recognition is unavailable (see the `asr` feature)")),
+    }
+}
+
+/// Resolve a VOICEVOX speaker ID from the free-text `tts_voice_ja` setting: a
+/// bare number is used directly (full control over any installed speaker),
+/// otherwise a few well-known default VOICEVOX character names resolve to
+/// their public speaker IDs (stable across VOICEVOX Engine installs),
+/// falling back to Zundamon Normal — the project's documented default voice
+/// (see `language.rs`'s `default_tts_voice`).
+fn resolve_voicevox_speaker_id(voice: &str) -> u32 {
+    const ZUNDAMON_NORMAL: u32 = 3;
+    let voice = voice.trim();
+    if let Ok(id) = voice.parse::<u32>() {
+        return id;
+    }
+    match voice.to_lowercase().as_str() {
+        "shikoku metan" | "metan" | "四国めたん" => 2,
+        "zundamon" | "ずんだもん" => ZUNDAMON_NORMAL,
+        "kasukabe tsumugi" | "tsumugi" | "春日部つむぎ" => 8,
+        _ => ZUNDAMON_NORMAL,
+    }
+}
+
+/// Build the pronunciation tab's playback callbacks. Japanese speaks through
+/// a locally-running VOICEVOX Engine (default `http://127.0.0.1:50021` — the
+/// user must have it running separately; there's no bundled offline engine),
+/// caching synthesized audio to disk so repeat playback of the same word
+/// doesn't re-synthesize it. Spanish stays "unavailable": Piper needs a
+/// downloaded `.onnx` voice model and there's no installer for one yet (see
+/// ROADMAP.md Phase 8), unlike the Japanese dictionary installer in
+/// `installer.rs`. Recording/transcription (speech recognition) are a
+/// separate, still-unimplemented feature (the `asr` module).
+fn pronunciation_callbacks(active_language: Language, settings: &Settings) -> pronunciation::PronunciationCallbacks {
+    if active_language != Language::Japanese {
+        return unavailable_pronunciation_callbacks(active_language);
+    }
+
+    let code = active_language.code();
+    let cache_dir = crate::config::AppDirs::new().map(|d| d.audio_cache_dir());
+    let speaker_id = resolve_voicevox_speaker_id(&settings.tts_voice_ja);
+    let voice_label = settings.tts_voice_ja.clone();
+
+    let synth_cache_dir = cache_dir.clone();
+    let synth_voice_label = voice_label.clone();
+    let play_cache_dir = cache_dir;
+
+    pronunciation::PronunciationCallbacks {
+        synthesize: Box::new(move |text: &str| {
+            if let Some(dir) = &synth_cache_dir {
+                if let Some(cached) = langspark_core::AudioCache::new(dir.clone()).get(code, &synth_voice_label, text) {
+                    return Ok(cached);
+                }
+            }
+            let wav = langspark_core::VoicevoxTts::default_local(speaker_id).synthesize(text)?;
+            if let Some(dir) = &synth_cache_dir {
+                if let Err(e) = langspark_core::AudioCache::new(dir.clone()).put(code, &synth_voice_label, text, &wav) {
+                    log::warn!("failed to cache synthesized audio: {e}");
+                }
+            }
+            Ok(wav)
+        }),
+        record: Box::new(|| anyhow::bail!("no microphone recording backend configured yet")),
+        play: Box::new(move |wav: Vec<u8>| {
+            let dir = play_cache_dir.clone().unwrap_or_else(std::env::temp_dir);
+            langspark_core::AudioManager::new(dir).play(wav)
+        }),
+        score: Box::new(move |r, e| langspark_core::score_pronunciation(r, e, code)),
         transcribe: Box::new(|_, _| anyhow::bail!("speech recognition is unavailable (see the `asr` feature)")),
     }
 }

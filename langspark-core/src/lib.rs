@@ -16,6 +16,7 @@ pub mod audio;
 pub mod database;
 pub mod dictionary;
 pub mod error;
+pub mod installer;
 pub mod language;
 pub mod logging;
 pub mod model;
@@ -30,6 +31,7 @@ pub use audio::{audio_devices_available, list_audio_devices, AudioCache, AudioMa
 pub use error::LangSparkError;
 pub use database::{Database, Repository, initialize_schema, Migration};
 pub use dictionary::{Dictionary, DictionaryManager, VocabEntry, VocabFilter};
+pub use installer::{install_jmdict, install_kanjidic};
 pub use language::{InstallationStatus, Language, LanguageInfo, LanguageManager, LanguageRegistry};
 pub use logging::init_logging;
 pub use model::{Meaning, Reading, Word};

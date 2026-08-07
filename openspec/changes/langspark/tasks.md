@@ -132,6 +132,7 @@
 - [x] 12.6 Create grid view for expanded sections — `FlowBox`
 - [x] 12.7 Implement language-specific section grouping (JLPT for Japanese, CEFR for Spanish) — generic by `level` field, works for both
 - [x] 12.8 Add search box and filter controls — `SearchEntry` filters client-side over the already-loaded entries (`filter_entries`, tested)
+- [x] 12.9 Add "Add Word" dictionary lookup dialog — searches the installed dictionary (`DictionaryManager`) and persists picks into the vocabulary database, appending live to the tab without a reload (`vocabulary/lookup.rs`, `app.rs::dictionary_add_word_callbacks`)
 
 ## 13. Kanji Tab UI (Language-Specific)
 
@@ -157,7 +158,7 @@
 
 - [x] 15.1 Create pronunciation tab module
 - [x] 15.2 Implement word selection for practice (language-specific)
-- [x] 15.3 Create play button with language-specific TTS integration — calls an injected `synthesize` callback (real `VoicevoxTts`/`PiperTts` wiring is section 24)
+- [x] 15.3 Create play button with language-specific TTS integration — calls an injected `synthesize` callback; real wiring is 24.7 (Japanese only — Piper/Spanish still reports "unavailable", no voice-model installer exists yet)
 - [x] 15.4 Implement record/stop buttons with CPAL — single "Record" button captures a fixed clip via the injected `record` callback (`AudioRecorder`); no separate stop button yet
 - [x] 15.5 Add waveform visualization widget
 - [x] 15.6 Create score display area
@@ -206,7 +207,7 @@
 - [x] 19.7 Add UI theme selection — wired to `adw::StyleManager`
 - [x] 19.8 Implement audio device selection — `langspark_core::list_audio_devices` + `ComboRow`
 - [x] 19.9 Add cache cleanup controls — Clear Cache button wired to `AudioCache::clear`
-- [x] 19.10 Add language installation management — install buttons shown per language (actual download flow is section 25/"Advanced Features")
+- [x] 19.10 Add language installation management — install buttons shown per language; the Japanese dictionary install flow is real (`installer.rs` downloads JMdict/Kanjidic from `scriptin/jmdict-simplified` GitHub releases) and the installed file is actually loaded and searchable via 12.9 (`state.rs::load_dictionary`). Spanish still has no automated installer (no maintained JSON export — see `dictionary.rs`).
 
 ## 20. Async Task Infrastructure
 
@@ -248,9 +249,10 @@
 - [x] 24.1 Connect langspark-core to langspark-gui (dependency setup)
 - [x] 24.2 Implement event/message passing between core and UI — `review::ReviewSession`'s `on_review(index, rating)` callback is the message from UI back to app state
 - [x] 24.3 Create async bridge for core operations — `task::run_blocking` used for the review-save write path; found and fixed a real bug along the way: `rusqlite::Connection` isn't `Sync`, so `Database` now wraps it in a `Mutex` so `Arc<Database>`-based repositories can cross the background thread pool at all
-- [x] 24.4 Add error propagation from core to UI — repository/load failures surface via `diagnostics::show_error_toast`
+- [x] 24.4 Add error propagation from core to UI — repository/load failures surface via `diagnostics::show_error_toast`. Found and fixed a bug where a duplicate `ToastOverlay` was created and never attached to the window, so every toast (including this one and 24.7's) silently vanished until this session.
 - [x] 24.5 Implement state synchronization — `state::AppState::load_tab_data()` is the single source of truth feeding vocabulary/kanji/review/statistics tabs consistently; verified live (real on-disk DB at `~/.local/share/langspark/langspark.db`, confirmed via screenshot)
 - [x] 24.6 Wire language manager to all language-aware components — `LanguageManager` drives which language every repository query filters by and the kanji tab's visibility; real-time language switching mid-session is an explicit non-goal (design.md), so switching takes effect on restart
+- [x] 24.7 Wire real Japanese TTS into the pronunciation tab — `VoicevoxTts` talks to a locally-running VOICEVOX Engine over HTTP, with synthesized audio cached to disk (`AudioCache`) and synthesis/playback errors surfaced in the tab instead of failing silently (`app.rs::pronunciation_callbacks`, `pronunciation/mod.rs`). Spanish/Piper remains unwired — see 15.3.
 
 ## 25. Build and Packaging
 
@@ -260,6 +262,7 @@
 - [x] 25.4 Create .desktop file for Linux application menu
 - [x] 25.5 Add AppStream metadata
 - [x] 25.6 Create installation instructions — README "Running from source" / "Building a release binary" sections
+- [x] 25.7 Add a local VOICEVOX Engine setup script for development/testing — `scripts/setup-voicevox.sh` (Docker-based: pulls `voicevox/voicevox_engine`, idempotent start/reuse, `--restart unless-stopped`)
 
 ## 26. Testing
 
