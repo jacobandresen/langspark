@@ -8,23 +8,28 @@
 
 use adw::prelude::*;
 use gtk4::{Box as GtkBox, Label, Orientation};
-use langspark_core::VocabularyEntry;
+use langspark_core::{ExampleSentence, VocabularyEntry};
+use std::rc::Rc;
 
 /// Callbacks for the actions available from the detail dialog.
 pub struct VocabularyDialogCallbacks {
-    /// Speak the word aloud. `None` if no TTS backend is available for the
-    /// active language — the Play button is omitted entirely rather than
-    /// shown disabled with no explanation.
-    pub on_play_audio: Option<Box<dyn Fn() + 'static>>,
+    /// Speak arbitrary text aloud — used both for the main word Play button
+    /// (word/reading) and each example sentence's own Play button (its
+    /// Japanese text). `None` if no TTS backend is available for the active
+    /// language — Play buttons are omitted entirely rather than shown
+    /// disabled with no explanation.
+    pub speak: Option<Rc<dyn Fn(String)>>,
     /// Delete this entry. The dialog closes immediately (optimistic UI); if
     /// the underlying delete fails, the caller is responsible for surfacing
     /// that separately (e.g. a toast) since the dialog is already gone.
     pub on_delete: Box<dyn Fn() + 'static>,
 }
 
-/// Build a vocabulary detail dialog for `entry`. Caller is responsible for
-/// calling `.present(Some(parent))` on the returned dialog.
-pub fn build(entry: &VocabularyEntry, callbacks: VocabularyDialogCallbacks) -> adw::Dialog {
+/// Build a vocabulary detail dialog for `entry`, showing `examples` (empty
+/// if none are available — most words don't have any, and Spanish never
+/// does, see `ExampleSentence`). Caller is responsible for calling
+/// `.present(Some(parent))` on the returned dialog.
+pub fn build(entry: &VocabularyEntry, examples: &[ExampleSentence], callbacks: VocabularyDialogCallbacks) -> adw::Dialog {
     let root = GtkBox::new(Orientation::Vertical, 12);
     root.set_margin_top(16);
     root.set_margin_bottom(16);
@@ -53,18 +58,39 @@ pub fn build(entry: &VocabularyEntry, callbacks: VocabularyDialogCallbacks) -> a
     }
     root.append(&list);
 
-    // Example sentence placeholder (populated once example-sentence data exists)
-    let example_row = adw::ExpanderRow::builder().title("Example sentence").build();
-    example_row.add_row(&adw::ActionRow::builder().title("No example available yet").build());
+    let example_title =
+        if examples.len() > 1 { format!("Example sentences ({})", examples.len()) } else { "Example sentence".to_string() };
+    let example_row = adw::ExpanderRow::builder().title(example_title).build();
+    if examples.is_empty() {
+        example_row.add_row(&adw::ActionRow::builder().title("No example available for this word").build());
+    } else {
+        for example in examples {
+            let row = adw::ActionRow::builder().title(&example.japanese).subtitle(&example.english).build();
+            if let Some(speak) = &callbacks.speak {
+                let speak = speak.clone();
+                let japanese = example.japanese.clone();
+                let play_btn = gtk4::Button::builder()
+                    .icon_name("media-playback-start-symbolic")
+                    .valign(gtk4::Align::Center)
+                    .tooltip_text("Play this sentence")
+                    .build();
+                play_btn.connect_clicked(move |_| speak(japanese.clone()));
+                row.add_suffix(&play_btn);
+            }
+            example_row.add_row(&row);
+        }
+    }
     let example_list = gtk4::ListBox::builder().css_classes(["boxed-list"]).margin_top(8).build();
     example_list.append(&example_row);
     root.append(&example_list);
 
     let action_box = GtkBox::new(Orientation::Horizontal, 8);
     action_box.set_margin_top(12);
-    if let Some(on_play_audio) = callbacks.on_play_audio {
+    if let Some(speak) = &callbacks.speak {
+        let speak = speak.clone();
+        let word_text = entry.reading.clone().unwrap_or_else(|| entry.word.clone());
         let play_btn = gtk4::Button::builder().label("▶ Play").css_classes(["suggested-action"]).build();
-        play_btn.connect_clicked(move |_| on_play_audio());
+        play_btn.connect_clicked(move |_| speak(word_text.clone()));
         action_box.append(&play_btn);
     }
     let delete_btn = gtk4::Button::builder().label("Delete").css_classes(["destructive-action"]).build();
@@ -105,7 +131,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn noop_callbacks() -> VocabularyDialogCallbacks {
-        VocabularyDialogCallbacks { on_play_audio: Some(Box::new(|| {})), on_delete: Box::new(|| {}) }
+        VocabularyDialogCallbacks { speak: Some(Rc::new(|_| {})), on_delete: Box::new(|| {}) }
     }
 
     // Widget-construction is exercised by the consolidated smoke test in

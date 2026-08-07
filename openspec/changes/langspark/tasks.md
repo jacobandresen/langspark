@@ -100,6 +100,8 @@
 - [x] 9.5 Implement confidence score handling — qwen3-asr-rs doesn't report one; field is reserved (`None`) for a backend that does
 - [x] 9.6 Add error handling for recognition failures — clear "unavailable" error without the `asr` feature; wrapped errors with it
 - [x] 9.7 Add language-specific text normalization (kana vs Latin script)
+- [x] 9.8 Wire `SpeechRecognizer` into the pronunciation tab's transcribe callback (`app.rs::build_transcribe`) and verify end-to-end with the `asr` feature built and running (not just type-checked) — libtorch 2.7.0 + Qwen3-ASR-0.6B, automated by `scripts/setup-asr.sh`. Found and worked around an upstream `qwen3-asr-rs` bug along the way: its output parser only strips the `<asr_text>` marker when auto-detecting language, not when a language is force-specified (which `SpeechRecognizer::transcribe` does) — see `asr.rs::strip_asr_text_marker`.
+- [x] 9.9 Make `asr` a default Cargo feature (both crates) now that setup is automated, with `--no-default-features` as the opt-out for environments without libtorch. `scripts/install.sh` installs libtorch + the ASR model (`setup-asr.sh`), VOICEVOX (`setup-voicevox.sh`), and the Japanese dictionary (new `langspark-core/examples/install_dictionary.rs` helper) as part of a single full setup, and bakes libtorch's path into the installed release binary's RPATH (`RUSTFLAGS=-C link-arg=-Wl,-rpath,...`) so it runs standalone without `LD_LIBRARY_PATH` — verified via `ldd` and a clean-env run of the installed binary.
 
 ## 10. Pronunciation Scoring (Tier 1 - Text Matching)
 

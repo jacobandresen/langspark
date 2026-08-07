@@ -30,7 +30,7 @@ pub use asr::{SpeechRecognizer, TranscriptionResult};
 pub use audio::{audio_devices_available, list_audio_devices, AudioCache, AudioManager, AudioPlayer, AudioRecorder};
 pub use error::LangSparkError;
 pub use database::{Database, Repository, default_migrations, initialize_schema, run_migrations, Migration};
-pub use dictionary::{Dictionary, DictionaryManager, VocabEntry, VocabFilter};
+pub use dictionary::{Dictionary, DictionaryManager, ExampleSentence, VocabEntry, VocabFilter};
 pub use installer::{install_jmdict, install_kanjidic};
 pub use language::{InstallationStatus, Language, LanguageInfo, LanguageManager, LanguageRegistry};
 pub use logging::init_logging;

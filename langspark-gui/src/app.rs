@@ -64,6 +64,7 @@ pub fn build_main_window(
             add_word: dictionary_add_word_callbacks(&state, active_language, &settings, &toast_overlay),
             on_play: vocab_play_callback(active_language, &settings.borrow(), &toast_overlay),
             delete: vocab_delete_callback(&state, &toast_overlay),
+            example_lookup: example_lookup_callback(&state, active_language),
         },
     );
     let vocab_page = view_stack.add_titled(&vocab_widget, Some("vocabulary"), "Vocabulary");
@@ -231,6 +232,22 @@ fn register_app_actions(app: &AdwApplication, window: &AdwApplicationWindow, set
         }
     ));
     app.add_action(&preferences_action);
+}
+
+/// Build the vocabulary detail dialog's example-sentence lookup from the
+/// dictionary loaded into `state`, or `None` if no dictionary is installed
+/// for `active_language` (in which case the dialog just always shows "no
+/// example available" — see `vocabulary/dialog.rs`).
+fn example_lookup_callback(
+    state: &Arc<AppState>,
+    active_language: Language,
+) -> Option<Rc<dyn Fn(&str) -> Vec<langspark_core::ExampleSentence>>> {
+    let code = active_language.code();
+    if !state.dictionary.is_loaded(code) {
+        return None;
+    }
+    let state = state.clone();
+    Some(Rc::new(move |word: &str| state.dictionary.examples_for(code, word)))
 }
 
 /// Build the "Add Word" callbacks for the vocabulary tab from the dictionary

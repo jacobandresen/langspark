@@ -36,12 +36,12 @@ Data persistence uses SQLite for reliability, with language-specific assets (dic
 
 | Language | Dictionary | TTS Engine | Speech Recognition |
 |----------|------------|------------|-------------------|
-| Japanese | JMdict, Kanjidic (`scriptin/jmdict-simplified` JSON format) | [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) (spoken to over its local HTTP API) | qwen3_asr_rs (optional, see below) |
-| Spanish | Custom minimal JSON schema — no maintained JSON dictionary export exists for Spanish; see `langspark_core::dictionary::spanish` | Piper (`piper-rs`, offline ONNX model) | qwen3_asr_rs (optional, see below) |
+| Japanese | JMdict, Kanjidic (`scriptin/jmdict-simplified` JSON format) | [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) (spoken to over its local HTTP API) | qwen3_asr_rs |
+| Spanish | Custom minimal JSON schema — no maintained JSON dictionary export exists for Spanish; see `langspark_core::dictionary::spanish` | Piper (`piper-rs`, offline ONNX model) | qwen3_asr_rs |
 
 Additional languages can be added by implementing a dictionary loader and wiring up TTS/ASR configuration; see `langspark_core::dictionary` and `langspark_core::tts`.
 
-**Speech recognition** (`qwen3_asr_rs`) is behind the `asr` Cargo feature because its only backends are `tch` (needs a system-wide libtorch install) and `mlx` (Apple Silicon only) — the default build doesn't require either, and `SpeechRecognizer::transcribe` reports a clear "unavailable" error without the feature enabled. Build with `cargo build --features langspark-core/asr` once libtorch is installed to enable it.
+**Speech recognition** (`qwen3_asr_rs`) is a *default* Cargo feature (`asr`), but its only backends are `tch` (needs a system-wide libtorch install) and `mlx` (Apple Silicon only) — so building it requires libtorch to actually be present. `./scripts/install.sh` sets this up automatically as part of a full install (see below); for day-to-day `cargo build`/`cargo run` during development, run `./scripts/setup-asr.sh` once, then export the `LIBTORCH`/`LD_LIBRARY_PATH` it prints in every shell you build or run from (libtorch is dynamically linked, so both build time *and* runtime need it). Without libtorch available, build with `--no-default-features` — `SpeechRecognizer::transcribe` then reports a clear "unavailable" error instead of failing to compile.
 
 ## Getting Started
 
@@ -50,25 +50,34 @@ Additional languages can be added by implementing a dictionary loader and wiring
 - Rust (edition 2021) with Cargo
 - GTK4 (4.10+) and libadwaita (1.4+) development libraries
 - An audio backend (ALSA/PulseAudio on Linux, CPAL's default host elsewhere)
+- libtorch, for speech recognition — a *default* Cargo feature (see "Speech recognition" above), so needed to build at all unless you pass `--no-default-features`
 - To use pronunciation practice: a running [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) for Japanese TTS, and a downloaded Piper voice model (`.onnx` + `.onnx.json`) for Spanish TTS
+
+`./scripts/install.sh` sets up everything above (except Rust/Cargo itself) automatically — see "Building a release binary" below. The rest of this section covers a manual dev-workflow setup instead.
 
 ### Running from source
 
 ```bash
+./scripts/setup-asr.sh                                    # once: libtorch + the ASR model
+export LIBTORCH="$HOME/.local/share/langspark/libtorch-2.7.0"
+export LD_LIBRARY_PATH="$LIBTORCH/lib:$LD_LIBRARY_PATH"    # every shell you build/run from
 cargo build --workspace          # builds langspark-core and langspark-gui
 cargo run -p langspark-gui       # launches the app
 ```
+
+Skip the `setup-asr.sh`/env var steps and pass `--no-default-features` to `cargo build`/`cargo run` instead if you don't want speech recognition (see "Speech recognition" above).
 
 On first run, LangSpark creates its SQLite database at the XDG data directory
 (`~/.local/share/langspark/langspark.db` on Linux) and looks for dictionary
 JSON files under `~/.local/share/langspark/dictionaries/<code>.json` — a
 missing dictionary shows as a dismissible toast rather than a hard failure
-(the app itself still opens).
+(the app itself still opens). `cargo run -p langspark-core --example install_dictionary`
+downloads it directly, or use Preferences → Language Installation from the app.
 
 ### Testing
 
 ```bash
-cargo test --workspace
+cargo test --workspace       # needs LIBTORCH set — see "Running from source" — or add --no-default-features
 ```
 
 `langspark-gui`'s tests construct real GTK widgets, which needs a display
@@ -80,16 +89,31 @@ xvfb-run -a cargo test --workspace
 
 ### Building a release binary
 
-```bash
-cargo build --release -p langspark-gui
-```
-
-The optimized binary is at `target/release/langspark-gui`. To install it
-system-wide (binary, `.desktop` entry, AppStream metadata) on Linux:
+The one-command path — `./scripts/install.sh` — does everything: installs
+system build dependencies (detecting `pacman`/`apt`/`dnf`/`zypper`, asking
+for `sudo`), sets up libtorch + the ASR model (`setup-asr.sh`) and a local
+VOICEVOX Engine via Docker (`setup-voicevox.sh`), builds the release binary
+(baking libtorch's path into the binary itself via `RUSTFLAGS`/`rpath`, so
+the *installed* binary doesn't need `LD_LIBRARY_PATH` set at launch — unlike
+a dev-workflow `cargo build`), installs it system-wide (binary, `.desktop`
+entry, AppStream metadata), and downloads the Japanese dictionary:
 
 ```bash
 PREFIX=/usr/local ./scripts/install.sh
 ```
+
+Each step can be skipped independently if you'd rather manage it yourself:
+`SKIP_DEPS=1`, `SKIP_ASR=1`, `SKIP_VOICEVOX=1`, `SKIP_DICTIONARY=1`. With
+`SKIP_ASR=1`, the release build itself falls back to `--no-default-features`
+(no speech recognition) rather than failing on a missing libtorch.
+
+To build the release binary yourself without the rest of `install.sh`:
+
+```bash
+cargo build --release -p langspark-gui   # needs LIBTORCH set — see "Running from source"
+```
+
+The optimized binary is at `target/release/langspark-gui`.
 
 ### Platform Notes
 
@@ -115,7 +139,7 @@ Select a word, click Play to hear the native pronunciation, then record yourself
 - **Language**: Rust
 - **UI Framework**: GTK4 with libadwaita
 - **Audio**: CPAL for capture, language-specific TTS engines for synthesis
-- **Speech Recognition**: qwen3_asr_rs (optional `asr` feature; supports Japanese and Spanish among 30+ languages)
+- **Speech Recognition**: qwen3_asr_rs (default `asr` feature, needs libtorch; supports Japanese and Spanish among 30+ languages)
 - **Database**: SQLite via rusqlite
 - **Async Runtime**: Tokio
 - **Serialization**: Serde
@@ -125,12 +149,16 @@ Select a word, click Play to hear the native pronunciation, then record yourself
 ```
 LangSpark/
 ├── langspark-core/     # Core logic: SRS, dictionaries, audio, TTS/ASR, pronunciation scoring
-│   └── src/
+│   ├── src/
+│   └── examples/
+│       └── install_dictionary.rs   # downloads the Japanese dictionary (used by install.sh)
 ├── langspark-gui/      # GTK4/libadwaita UI: tabs, dialogs, widgets, app state
 │   ├── src/
 │   └── data/           # style.css, .desktop file, AppStream metadata
 ├── scripts/
-│   └── install.sh      # Release build + system install
+│   ├── install.sh          # Full setup: deps, libtorch+ASR model, VOICEVOX, release build, install, dictionary
+│   ├── setup-asr.sh        # libtorch + Qwen3-ASR model (speech recognition), standalone
+│   └── setup-voicevox.sh   # Local VOICEVOX Engine via Docker (Japanese TTS), standalone
 └── openspec/           # OpenSpec change documentation
 ```
 

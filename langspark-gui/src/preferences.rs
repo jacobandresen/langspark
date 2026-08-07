@@ -259,8 +259,10 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
                 .build();
 
             if meta.code == "ja" {
-                let install_btn = gtk4::Button::builder().label("Install").valign(gtk4::Align::Center).build();
-                install_btn.set_sensitive(!already_installed);
+                let install_btn = gtk4::Button::builder()
+                    .label(if already_installed { "Reinstall" } else { "Install" })
+                    .valign(gtk4::Align::Center)
+                    .build();
                 row.add_suffix(&install_btn);
 
                 install_btn.connect_clicked(glib::clone!(
@@ -294,12 +296,13 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
                                 match result {
                                     Ok(version) => {
                                         row.set_subtitle(&format!("Installed (JMdict {version})"));
+                                        install_btn.set_label("Reinstall");
                                     }
                                     Err(e) => {
                                         row.set_subtitle(&format!("Install failed: {e}"));
-                                        install_btn.set_sensitive(true);
                                     }
                                 }
+                                install_btn.set_sensitive(true);
                             }
                         ));
                     }

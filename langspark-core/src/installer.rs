@@ -14,8 +14,11 @@ use std::path::Path;
 
 const RELEASES_API: &str = "https://api.github.com/repos/scriptin/jmdict-simplified/releases/latest";
 
-/// Asset name prefix for the English-glossed JMdict word list.
-pub const JMDICT_ASSET_PREFIX: &str = "jmdict-eng-";
+/// Asset name prefix for the English-glossed JMdict word list, including
+/// Tatoeba-sourced example sentences per sense (a strict superset of the
+/// plain `jmdict-eng-*` asset's words/readings/glosses — see `dictionary.rs`'s
+/// `JmdictSense::examples`).
+pub const JMDICT_ASSET_PREFIX: &str = "jmdict-examples-eng-";
 /// Asset name prefix for the English-glossed Kanjidic kanji list.
 pub const KANJIDIC_ASSET_PREFIX: &str = "kanjidic2-en-";
 
@@ -156,6 +159,17 @@ mod tests {
     fn test_select_asset_ignores_non_tgz() {
         let assets = vec![asset("jmdict-eng-3.6.1.json.zip")];
         assert!(select_asset(&assets, "jmdict-eng-").is_none());
+    }
+
+    #[test]
+    fn test_jmdict_asset_prefix_selects_examples_variant_not_plain_eng() {
+        // jmdict-examples-eng is a strict superset of jmdict-eng (same
+        // words/readings/glosses, plus example sentences) — make sure the
+        // prefix used in production picks the examples-bearing asset and
+        // isn't accidentally satisfied by the plain jmdict-eng one.
+        let assets = vec![asset("jmdict-eng-3.6.1.json.tgz"), asset("jmdict-examples-eng-3.6.1.json.tgz")];
+        let found = select_asset(&assets, JMDICT_ASSET_PREFIX).unwrap();
+        assert_eq!(found.name, "jmdict-examples-eng-3.6.1.json.tgz");
     }
 
     fn make_tgz(entries: &[(&str, &[u8])]) -> Vec<u8> {

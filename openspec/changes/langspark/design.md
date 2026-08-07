@@ -342,7 +342,7 @@ jv/
 ## Open Questions
 
 1. **Model distribution:** Should VOICEVOX, Piper, and qwen3 models be bundled with the application, downloaded on first run, or optional add-ons?
-   - Decided for VOICEVOX: neither bundled nor downloaded by LangSpark — the app is an HTTP client of a separately-run VOICEVOX Engine process (see "Text-to-Speech: VOICEVOX"), which the user starts themselves (`scripts/setup-voicevox.sh` automates a local Docker-based setup). Piper (Spanish) and qwen3 (ASR) remain undecided — no installer exists for either yet.
+   - Decided for VOICEVOX: neither bundled nor downloaded by LangSpark — the app is an HTTP client of a separately-run VOICEVOX Engine process (see "Text-to-Speech: VOICEVOX"), which the user starts themselves (`scripts/setup-voicevox.sh` automates a local Docker-based setup). Decided for qwen3 (ASR): downloaded on first setup, not bundled — `scripts/setup-asr.sh` downloads a version-pinned libtorch and the Qwen3-ASR-0.6B model weights (run automatically by `scripts/install.sh`); the `asr` Cargo feature is enabled by default, with `--no-default-features` as the escape hatch when libtorch isn't available. Piper (Spanish) remains undecided — no installer exists yet.
 
 2. **Audio caching:** Should generated TTS audio be cached permanently, temporarily, or not at all?
    - Current plan: Cache indefinitely, provide cache cleanup in preferences. Cache per-language.

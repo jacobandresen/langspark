@@ -24,23 +24,34 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 
+# Prefer plain `docker`, but fall back to `sudo docker`: if this script (or
+# install.sh) just added the user to the docker group, that membership isn't
+# active in the current shell session yet (needs a fresh login, or `newgrp
+# docker`) even though the daemon itself is up.
+DOCKER=(docker)
 if ! docker info >/dev/null 2>&1; then
-    echo "Can't reach the Docker daemon. Is it running, and are you in the docker group?" >&2
-    echo "  sudo systemctl enable --now docker" >&2
-    echo "  sudo usermod -aG docker \$USER   # then re-login, or run: newgrp docker" >&2
-    exit 1
+    if sudo docker info >/dev/null 2>&1; then
+        echo "Note: using 'sudo docker' — you're not in the docker group in this shell session yet"
+        echo "(re-login, or run 'newgrp docker', to use plain 'docker' from now on)."
+        DOCKER=(sudo docker)
+    else
+        echo "Can't reach the Docker daemon. Is it running?" >&2
+        echo "  sudo systemctl enable --now docker" >&2
+        echo "  sudo usermod -aG docker \$USER   # then re-login, or run: newgrp docker" >&2
+        exit 1
+    fi
 fi
 
-if docker ps --filter "name=^${CONTAINER}\$" --filter "status=running" --format '{{.Names}}' | grep -q "^${CONTAINER}\$"; then
+if "${DOCKER[@]}" ps --filter "name=^${CONTAINER}\$" --filter "status=running" --format '{{.Names}}' | grep -q "^${CONTAINER}\$"; then
     echo "VOICEVOX Engine is already running as '${CONTAINER}'."
-elif docker ps -a --filter "name=^${CONTAINER}\$" --format '{{.Names}}' | grep -q "^${CONTAINER}\$"; then
+elif "${DOCKER[@]}" ps -a --filter "name=^${CONTAINER}\$" --format '{{.Names}}' | grep -q "^${CONTAINER}\$"; then
     echo "Starting existing '${CONTAINER}' container..."
-    docker start "${CONTAINER}" >/dev/null
+    "${DOCKER[@]}" start "${CONTAINER}" >/dev/null
 else
     echo "Pulling ${IMAGE}..."
-    docker pull "${IMAGE}"
+    "${DOCKER[@]}" pull "${IMAGE}"
     echo "Starting '${CONTAINER}' on port ${PORT}..."
-    docker run -d \
+    "${DOCKER[@]}" run -d \
         --name "${CONTAINER}" \
         --restart unless-stopped \
         -p "${PORT}:50021" \

@@ -113,13 +113,14 @@ mod gtk_smoke {
         let _main_window = app::build_main_window(&app, langspark_core::Language::Japanese, settings, state);
 
         let vocab_entry = vocabulary::dialog::tests::sample_entry();
-        let _vocab_dialog = vocabulary::dialog::build(&vocab_entry, vocabulary::dialog::tests::noop_callbacks());
+        let _vocab_dialog = vocabulary::dialog::build(&vocab_entry, &[], vocabulary::dialog::tests::noop_callbacks());
         let _vocab_tab = vocabulary::build_tab(
             &[vocab_entry],
             vocabulary::VocabTabCallbacks {
                 add_word: None,
                 on_play: None,
                 delete: std::rc::Rc::new(|_, _, _| {}),
+                example_lookup: None,
             },
         );
 

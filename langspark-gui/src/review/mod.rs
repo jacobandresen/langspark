@@ -1,13 +1,12 @@
 //! Review tab: spaced-repetition review queue. Shows one card at a time
-//! (front, then flip to reveal the back), rating buttons that drive the SM-2
-//! backend, a progress indicator, and keyboard shortcuts for rating.
+//! (front, then flip to reveal the back), rating buttons that report each
+//! rating via `on_review` — the caller (`app.rs::build_main_window`'s
+//! `ReviewSession::new` call) persists it through the user's chosen SM-2/
+//! FSRS backend — a progress indicator, and keyboard shortcuts for rating.
 
 use gtk4::prelude::*;
 use gtk4::{Box, Label, Orientation};
-use langspark_core::{
-    KanjiEntry, SrsBackend, SrsCard, VocabularyEntry, SM2Backend, RATING_AGAIN, RATING_EASY, RATING_GOOD,
-    RATING_HARD,
-};
+use langspark_core::{KanjiEntry, SrsCard, VocabularyEntry, RATING_AGAIN, RATING_EASY, RATING_GOOD, RATING_HARD};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -136,8 +135,6 @@ impl ReviewSession {
         ] {
             btn.connect_clicked(glib::clone!(
                 #[strong]
-                queue,
-                #[strong]
                 index,
                 #[strong]
                 on_review,
@@ -145,12 +142,6 @@ impl ReviewSession {
                 refresh,
                 move |_| {
                     let i = index.get();
-                    {
-                        let mut q = queue.borrow_mut();
-                        if let Some(item) = q.get_mut(i) {
-                            SM2Backend.update_card(&mut item.card, rating);
-                        }
-                    }
                     on_review(i, rating);
                     index.set(i + 1);
                     refresh();

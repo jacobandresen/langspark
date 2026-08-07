@@ -1858,6 +1858,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "cpal",
+ "directories",
  "flate2",
  "hound",
  "log",

@@ -24,6 +24,10 @@ struct CardCallbacks {
     on_play: Option<Rc<dyn Fn(String)>>,
     delete: Rc<dyn Fn(i64, StdBox<dyn Fn()>, StdBox<dyn Fn()>)>,
     remove: Rc<dyn Fn(i64)>,
+    /// Look up example sentences for a word (by exact text match against the
+    /// loaded dictionary). `None` if no dictionary is loaded for the active
+    /// language, in which case the dialog just shows "no example available".
+    example_lookup: Option<Rc<dyn Fn(&str) -> Vec<langspark_core::ExampleSentence>>>,
 }
 
 /// A single vocabulary entry rendered as a clickable card. Clicking it opens
@@ -57,12 +61,6 @@ fn build_card(entry: &VocabularyEntry, callbacks: &CardCallbacks) -> gtk4::Butto
     let dialog_entry = entry.clone();
     let callbacks = callbacks.clone();
     card.connect_clicked(move |btn| {
-        let speak_text = dialog_entry.reading.clone().unwrap_or_else(|| dialog_entry.word.clone());
-        let on_play_audio: Option<StdBox<dyn Fn()>> = callbacks
-            .on_play
-            .clone()
-            .map(|on_play| StdBox::new(move || on_play(speak_text.clone())) as StdBox<dyn Fn()>);
-
         let id = dialog_entry.id;
         let delete = callbacks.delete.clone();
         let remove = callbacks.remove.clone();
@@ -72,7 +70,13 @@ fn build_card(entry: &VocabularyEntry, callbacks: &CardCallbacks) -> gtk4::Butto
             delete(id, StdBox::new(move || remove(id)), StdBox::new(|| {}));
         });
 
-        let dialog = dialog::build(&dialog_entry, dialog::VocabularyDialogCallbacks { on_play_audio, on_delete });
+        let examples = callbacks.example_lookup.as_ref().map(|lookup| lookup(&dialog_entry.word)).unwrap_or_default();
+
+        let dialog = dialog::build(
+            &dialog_entry,
+            &examples,
+            dialog::VocabularyDialogCallbacks { speak: callbacks.on_play.clone(), on_delete },
+        );
         dialog.present(Some(btn));
     });
 
@@ -147,6 +151,9 @@ pub struct VocabTabCallbacks {
     /// exactly one of the two callbacks once the (asynchronous) delete
     /// completes.
     pub delete: Rc<dyn Fn(i64, StdBox<dyn Fn()>, StdBox<dyn Fn()>)>,
+    /// Look up example sentences for a word, from the detail dialog. `None`
+    /// if no dictionary is loaded for the active language.
+    pub example_lookup: Option<Rc<dyn Fn(&str) -> Vec<langspark_core::ExampleSentence>>>,
 }
 
 /// Build the vocabulary tab's root widget: a search box (plus an "Add Word"
@@ -158,7 +165,7 @@ pub struct VocabTabCallbacks {
 /// added via the dictionary lookup dialog, or deleted via a card's detail
 /// dialog, are appended to/dropped from the live list without a full reload.
 pub fn build_tab(entries: &[VocabularyEntry], callbacks: VocabTabCallbacks) -> gtk4::Widget {
-    let VocabTabCallbacks { add_word, on_play, delete } = callbacks;
+    let VocabTabCallbacks { add_word, on_play, delete, example_lookup } = callbacks;
 
     let root = Box::new(Orientation::Vertical, 12);
     root.set_margin_top(12);
@@ -252,7 +259,7 @@ pub fn build_tab(entries: &[VocabularyEntry], callbacks: VocabTabCallbacks) -> g
             render(&query_state.borrow());
         }
     ));
-    *card_callbacks.borrow_mut() = Some(CardCallbacks { on_play, delete, remove });
+    *card_callbacks.borrow_mut() = Some(CardCallbacks { on_play, delete, remove, example_lookup });
     render("");
 
     if let Some(add_word) = add_word {

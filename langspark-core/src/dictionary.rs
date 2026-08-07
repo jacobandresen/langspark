@@ -34,6 +34,19 @@ pub struct VocabEntry {
     pub level: Option<String>,
     /// Language code ("ja", "es")
     pub language: String,
+    /// Example sentences using this word (Japanese only — Tatoeba-sourced,
+    /// via the `jmdict-examples-eng` dictionary asset; see `installer.rs`).
+    /// Empty for Spanish, or if this word simply has none in the source data
+    /// (most words don't — only ~13% of JMdict entries have any).
+    pub examples: Vec<ExampleSentence>,
+}
+
+/// A Japanese/English example sentence pair for a vocabulary word, sourced
+/// from the Tatoeba corpus via JMdict's `jmdict-examples-eng` asset.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExampleSentence {
+    pub japanese: String,
+    pub english: String,
 }
 
 // ---------------------------------------------------------------------
@@ -74,12 +87,29 @@ struct JmdictSense {
     part_of_speech: Vec<String>,
     #[serde(default)]
     gloss: Vec<JmdictGloss>,
+    /// Only present in the `jmdict-examples-eng` asset; absent (defaults to
+    /// empty) when parsing the plain `jmdict-eng` format, so this struct
+    /// works for either.
+    #[serde(default)]
+    examples: Vec<JmdictExample>,
 }
 
 #[derive(Debug, Deserialize)]
 struct JmdictGloss {
     #[serde(default)]
     lang: Option<String>,
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct JmdictExample {
+    #[serde(default)]
+    sentences: Vec<JmdictExampleSentence>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JmdictExampleSentence {
+    lang: String,
     text: String,
 }
 
@@ -110,6 +140,16 @@ pub fn load_jmdict(json: &str) -> Result<Vec<VocabEntry>> {
                 .iter()
                 .flat_map(|s| s.part_of_speech.iter().cloned())
                 .collect();
+            let examples: Vec<ExampleSentence> = w
+                .sense
+                .iter()
+                .flat_map(|s| s.examples.iter())
+                .filter_map(|ex| {
+                    let japanese = ex.sentences.iter().find(|s| s.lang == "jpn")?.text.clone();
+                    let english = ex.sentences.iter().find(|s| s.lang == "eng")?.text.clone();
+                    Some(ExampleSentence { japanese, english })
+                })
+                .collect();
 
             VocabEntry {
                 id: w.id,
@@ -119,6 +159,7 @@ pub fn load_jmdict(json: &str) -> Result<Vec<VocabEntry>> {
                 part_of_speech,
                 level: None,
                 language: "ja".to_string(),
+                examples,
             }
         })
         .collect();
@@ -284,6 +325,7 @@ pub mod spanish {
                 part_of_speech: e.part_of_speech,
                 level: e.cefr_level,
                 language: "es".to_string(),
+                examples: Vec::new(),
             })
             .collect())
     }
@@ -401,6 +443,19 @@ impl DictionaryManager {
             .unwrap_or_default()
     }
 
+    /// Example sentences for a word, matched by exact form (kanji or kana)
+    /// against the loaded dictionary — used by the vocabulary detail dialog,
+    /// which only has the saved word text (not a dictionary entry id) to
+    /// look up against. Empty if nothing is loaded for `language`, no entry
+    /// matches `word` exactly, or the matching entry(s) simply have no
+    /// examples in the source data.
+    pub fn examples_for(&self, language: &str, word: &str) -> Vec<ExampleSentence> {
+        self.entries
+            .get(language)
+            .map(|entries| entries.iter().filter(|e| e.word == word).flat_map(|e| e.examples.iter().cloned()).collect())
+            .unwrap_or_default()
+    }
+
     /// Filter entries for a language by proficiency level and/or part of speech.
     pub fn filter(&self, language: &str, filter: &VocabFilter) -> Vec<&VocabEntry> {
         self.entries
@@ -451,7 +506,18 @@ mod tests {
                 "id": "1",
                 "kanji": [{"common": true, "text": "受け取る", "tags": []}],
                 "kana": [{"common": true, "text": "うけとる", "tags": [], "appliesToKanji": ["*"]}],
-                "sense": [{"partOfSpeech": ["v5r", "vt"], "gloss": [{"lang": "eng", "text": "to receive"}]}]
+                "sense": [{
+                    "partOfSpeech": ["v5r", "vt"],
+                    "gloss": [{"lang": "eng", "text": "to receive"}],
+                    "examples": [{
+                        "sentences": [
+                            {"lang": "jpn", "text": "彼はプレゼントを受け取った。"},
+                            {"lang": "eng", "text": "He received the present."}
+                        ],
+                        "source": {"type": "tatoeba", "value": "1"},
+                        "text": "受け取る"
+                    }]
+                }]
             },
             {
                 "id": "2",
@@ -494,6 +560,20 @@ mod tests {
         assert_eq!(entries[0].language, "ja");
         // Word with no kanji form falls back to kana
         assert_eq!(entries[1].word, "たべる");
+    }
+
+    #[test]
+    fn test_load_jmdict_parses_example_sentences() {
+        let entries = load_jmdict(JMDICT_FIXTURE).unwrap();
+        assert_eq!(
+            entries[0].examples,
+            vec![ExampleSentence {
+                japanese: "彼はプレゼントを受け取った。".to_string(),
+                english: "He received the present.".to_string(),
+            }]
+        );
+        // Word with no examples in the source data gets an empty list, not an error.
+        assert!(entries[1].examples.is_empty());
     }
 
     #[test]
@@ -550,6 +630,23 @@ mod tests {
         );
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].word, "comer");
+    }
+
+    #[test]
+    fn test_dictionary_manager_examples_for() {
+        let mut manager = DictionaryManager::new();
+        manager.load_japanese(JMDICT_FIXTURE, Some("3.5.0")).unwrap();
+
+        let examples = manager.examples_for("ja", "受け取る");
+        assert_eq!(examples.len(), 1);
+        assert_eq!(examples[0].english, "He received the present.");
+
+        // Word with no examples in the source data.
+        assert!(manager.examples_for("ja", "たべる").is_empty());
+        // No exact match.
+        assert!(manager.examples_for("ja", "食べる").is_empty());
+        // Nothing loaded for this language.
+        assert!(manager.examples_for("es", "recibir").is_empty());
     }
 
     #[test]

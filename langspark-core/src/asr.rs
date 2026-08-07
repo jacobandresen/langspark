@@ -63,7 +63,7 @@ impl SpeechRecognizer {
             .transcribe(path_str, Some(&self.language))
             .map_err(|e| anyhow::anyhow!("qwen3 ASR transcription failed: {e}"))?;
         Ok(TranscriptionResult {
-            text: output.text,
+            text: strip_asr_text_marker(&output.text),
             confidence: None,
             language: self.language.clone(),
         })
@@ -75,6 +75,33 @@ impl SpeechRecognizer {
             "speech recognition is unavailable: langspark-core was built without the `asr` feature \
              (requires a libtorch install; see qwen3-asr-rs docs)"
         )
+    }
+}
+
+/// Strip a leading `<asr_text>` marker from qwen3-asr-rs's output.
+///
+/// `qwen3_asr_rs::AsrInference::transcribe`'s own output parser only strips
+/// this marker when *auto-detecting* the language; when a language is
+/// force-specified (as `SpeechRecognizer::transcribe` does, passing
+/// `Some(&self.language)`), its `parse_asr_output` takes an early-return
+/// path that skips the strip — so the marker otherwise leaks into the
+/// returned text and would silently wreck downstream text comparison (e.g.
+/// `pronunciation::score_pronunciation`, which expects plain recognized
+/// text). This works around that rather than patching the upstream crate.
+#[cfg(feature = "asr")]
+fn strip_asr_text_marker(text: &str) -> String {
+    text.rsplit_once("<asr_text>").map(|(_, after)| after).unwrap_or(text).trim().to_string()
+}
+
+#[cfg(all(test, feature = "asr"))]
+mod asr_feature_tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_asr_text_marker() {
+        assert_eq!(strip_asr_text_marker("<asr_text>受け取る。"), "受け取る。");
+        assert_eq!(strip_asr_text_marker("受け取る。"), "受け取る。");
+        assert_eq!(strip_asr_text_marker("  <asr_text>  hola  "), "hola");
     }
 }
 
