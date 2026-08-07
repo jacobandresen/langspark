@@ -4,12 +4,13 @@
 
 pub mod dialog;
 
-use gtk4::prelude::*;
+use adw::prelude::*;
 use gtk4::{Box, FlowBox, Label, Orientation, Revealer, ScrolledWindow};
 use langspark_core::KanjiEntry;
 use std::collections::BTreeMap;
 
-/// A single kanji rendered as a clickable card: large character, readings, meanings.
+/// A single kanji rendered as a clickable card: large character, readings,
+/// meanings. Clicking it opens the read-only detail dialog (`dialog::build`).
 pub fn build_card(entry: &KanjiEntry) -> gtk4::Button {
     let content = Box::new(Orientation::Vertical, 4);
     content.set_margin_top(8);
@@ -34,7 +35,12 @@ pub fn build_card(entry: &KanjiEntry) -> gtk4::Button {
     let meanings = Label::builder().label(&entry.meanings).wrap(true).max_width_chars(20).build();
     content.append(&meanings);
 
-    gtk4::Button::builder().child(&content).css_classes(["card", "langspark-card"]).build()
+    let button = gtk4::Button::builder().child(&content).css_classes(["card", "langspark-card"]).build();
+    let dialog_entry = entry.clone();
+    button.connect_clicked(move |btn| {
+        dialog::build(&dialog_entry).present(Some(btn));
+    });
+    button
 }
 
 fn build_section(level: &str, entries: &[&KanjiEntry]) -> gtk4::Box {

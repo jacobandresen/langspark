@@ -346,6 +346,8 @@ impl SrsCard {
             last_reviewed: row.get(9)?,
             language: row.get(10)?,
             created_at: row.get(11)?,
+            stability: row.get(12)?,
+            difficulty: row.get(13)?,
         })
     }
 }
@@ -364,8 +366,8 @@ impl SqliteSrsRepository {
     pub fn create(&self, card: &SrsCard) -> Result<i64> {
         let conn = self.db.conn();
         conn.execute(
-            "INSERT INTO srs_cards (vocab_id, kanji_id, card_type, state, repetitions, ease_factor, interval_days, next_review_date, last_reviewed, language)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO srs_cards (vocab_id, kanji_id, card_type, state, repetitions, ease_factor, interval_days, next_review_date, last_reviewed, language, stability, difficulty)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 card.vocab_id,
                 card.kanji_id,
@@ -377,6 +379,8 @@ impl SqliteSrsRepository {
                 card.next_review_date,
                 card.last_reviewed,
                 card.language,
+                card.stability,
+                card.difficulty,
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -395,9 +399,9 @@ impl SqliteSrsRepository {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         
         let mut stmt = conn.prepare(
-            "SELECT id, vocab_id, kanji_id, card_type, state, repetitions, ease_factor, interval_days, next_review_date, last_reviewed, language, created_at 
-             FROM srs_cards 
-             WHERE language = ? AND date(next_review_date) <= date(?) 
+            "SELECT id, vocab_id, kanji_id, card_type, state, repetitions, ease_factor, interval_days, next_review_date, last_reviewed, language, created_at, stability, difficulty
+             FROM srs_cards
+             WHERE language = ? AND date(next_review_date) <= date(?)
              ORDER BY next_review_date ASC",
         )?;
         
@@ -408,25 +412,35 @@ impl SqliteSrsRepository {
         Ok(cards)
     }
     
-    /// Update card after review
+    /// Update card after review using the SM-2 backend. Kept for existing
+    /// callers/tests; prefer `update_after_review_with_algorithm` so the
+    /// user's chosen algorithm (see `Settings::srs_algorithm`) is honored.
     pub fn update_after_review(&self, card_id: i64, rating: SrsRating) -> Result<()> {
+        self.update_after_review_with_algorithm(card_id, rating, "sm2")
+    }
+
+    /// Update card after review, using FSRS if `algorithm == "fsrs"` and
+    /// SM-2 otherwise.
+    pub fn update_after_review_with_algorithm(&self, card_id: i64, rating: SrsRating, algorithm: &str) -> Result<()> {
         let conn = self.db.conn();
-        
+
         // Load the full card from database
         let card = self.get_card_by_id(card_id)?;
-        
-        // Use the SM-2 backend to update the card
-        let backend = SM2Backend;
+
         let mut card_for_update = card.clone();
-        backend.update_card(&mut card_for_update, rating);
-        
+        if algorithm == "fsrs" {
+            crate::srs::FSRSBackend::default().update_card(&mut card_for_update, rating);
+        } else {
+            SM2Backend.update_card(&mut card_for_update, rating);
+        }
+
         // Update the card in database
         let mut update_stmt = conn.prepare(
-            "UPDATE srs_cards 
-             SET state = ?, repetitions = ?, ease_factor = ?, interval_days = ?, next_review_date = ?, last_reviewed = ?
+            "UPDATE srs_cards
+             SET state = ?, repetitions = ?, ease_factor = ?, interval_days = ?, next_review_date = ?, last_reviewed = ?, stability = ?, difficulty = ?
              WHERE id = ?",
         )?;
-        
+
         update_stmt.execute(params![
             card_for_update.state.as_str(),
             card_for_update.repetitions,
@@ -434,9 +448,11 @@ impl SqliteSrsRepository {
             card_for_update.interval_days,
             card_for_update.next_review_date,
             card_for_update.last_reviewed,
+            card_for_update.stability,
+            card_for_update.difficulty,
             card_id,
         ])?;
-        
+
         Ok(())
     }
     
@@ -444,7 +460,7 @@ impl SqliteSrsRepository {
     pub fn get_card_by_id(&self, card_id: i64) -> Result<SrsCard> {
         let conn = self.db.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, vocab_id, kanji_id, card_type, state, repetitions, ease_factor, interval_days, next_review_date, last_reviewed, language, created_at
+            "SELECT id, vocab_id, kanji_id, card_type, state, repetitions, ease_factor, interval_days, next_review_date, last_reviewed, language, created_at, stability, difficulty
              FROM srs_cards WHERE id = ?",
         )?;
 
@@ -727,6 +743,7 @@ mod tests {
         let temp = NamedTempFile::new().unwrap();
         let db = Database::open(temp.path()).unwrap();
         initialize_schema(&db.conn()).unwrap();
+        crate::database::run_migrations(&mut db.conn(), &crate::database::default_migrations()).unwrap();
         (Arc::new(db), temp)
     }
 

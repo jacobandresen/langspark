@@ -6,8 +6,9 @@
 //! in Preferences at last save — switching languages takes effect on restart.
 
 use langspark_core::{
-    initialize_schema, Database, Language, LanguageManager, ReviewStats, SqliteDeckRepository, SqliteKanjiRepository,
-    SqliteReviewRepository, SqliteSrsRepository, SqliteVocabularyRepository,
+    default_migrations, initialize_schema, run_migrations, Database, Language, LanguageManager, ReviewStats,
+    SqliteDeckRepository, SqliteKanjiRepository, SqliteReviewRepository, SqliteSrsRepository,
+    SqliteVocabularyRepository,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -35,6 +36,7 @@ impl AppState {
         }
         let db = Database::open(db_path)?;
         initialize_schema(&db.conn())?;
+        run_migrations(&mut db.conn(), &default_migrations())?;
         let db = Arc::new(db);
 
         let language_manager = LanguageManager::new(active_language);

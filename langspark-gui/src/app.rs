@@ -58,8 +58,14 @@ pub fn build_main_window(
     let view_stack = ViewStack::new();
     view_stack.set_vexpand(true);
 
-    let add_word_callbacks = dictionary_add_word_callbacks(&state, active_language, &toast_overlay);
-    let vocab_widget = vocabulary::build_tab(&tab_data.vocabulary, add_word_callbacks);
+    let vocab_widget = vocabulary::build_tab(
+        &tab_data.vocabulary,
+        vocabulary::VocabTabCallbacks {
+            add_word: dictionary_add_word_callbacks(&state, active_language, &settings, &toast_overlay),
+            on_play: vocab_play_callback(active_language, &settings.borrow(), &toast_overlay),
+            delete: vocab_delete_callback(&state, &toast_overlay),
+        },
+    );
     let vocab_page = view_stack.add_titled(&vocab_widget, Some("vocabulary"), "Vocabulary");
     vocab_page.set_icon_name(Some("accessories-dictionary-symbolic"));
 
@@ -77,15 +83,21 @@ pub fn build_main_window(
         glib::clone!(
             #[strong]
             state,
+            #[strong]
+            settings,
             #[weak]
             toast_overlay,
             move |index, rating| {
                 let Some(Some(card_id)) = review_card_ids.get(index).copied() else {
                     return;
                 };
+                let algorithm = settings.borrow().srs_algorithm.clone();
                 let state = state.clone();
                 crate::task::spawn_on_main(async move {
-                    let result = crate::task::run_blocking(move || state.srs_repo.update_after_review(card_id, rating)).await;
+                    let result = crate::task::run_blocking(move || {
+                        state.srs_repo.update_after_review_with_algorithm(card_id, rating, &algorithm)
+                    })
+                    .await;
                     if let Err(e) = result {
                         diagnostics::show_error_toast(&toast_overlay, &format!("Failed to save review: {e}"));
                     }
@@ -228,6 +240,7 @@ fn register_app_actions(app: &AdwApplication, window: &AdwApplicationWindow, set
 fn dictionary_add_word_callbacks(
     state: &Arc<AppState>,
     active_language: Language,
+    settings: &Rc<RefCell<Settings>>,
     toast_overlay: &ToastOverlay,
 ) -> Option<vocabulary::AddWordCallbacks> {
     let code = active_language.code();
@@ -245,6 +258,8 @@ fn dictionary_add_word_callbacks(
     > = Rc::new(glib::clone!(
         #[strong]
         state,
+        #[strong]
+        settings,
         #[weak]
         toast_overlay,
         move |dict_entry: langspark_core::VocabEntry,
@@ -262,10 +277,24 @@ fn dictionary_add_word_callbacks(
                 created_at: None,
                 updated_at: None,
             };
+            // Read live (the user may have changed it in Preferences since
+            // this callback was built) rather than capturing it once at startup.
+            let starting_ease_factor = settings.borrow().starting_ease_factor;
             let state = state.clone();
             crate::task::spawn_on_main(async move {
                 let to_insert = new_entry.clone();
-                let result = crate::task::run_blocking(move || state.vocabulary_repo.create(&to_insert)).await;
+                let result = crate::task::run_blocking(move || -> anyhow::Result<i64> {
+                    let vocab_id = state.vocabulary_repo.create(&to_insert)?;
+                    // Newly-added words are immediately due for review: also
+                    // create the SRS card that puts them in the Review tab's
+                    // queue (see `SrsCard::is_due_today`, true when unreviewed).
+                    let mut card = langspark_core::SrsCard::new("vocabulary", &to_insert.language);
+                    card.vocab_id = Some(vocab_id);
+                    card.ease_factor = starting_ease_factor;
+                    state.srs_repo.create(&card)?;
+                    Ok(vocab_id)
+                })
+                .await;
                 match result {
                     Ok(id) => {
                         let mut persisted = new_entry;
@@ -306,11 +335,68 @@ fn unavailable_pronunciation_callbacks(active_language: Language) -> pronunciati
     let code = active_language.code();
     pronunciation::PronunciationCallbacks {
         synthesize: Box::new(|_| anyhow::bail!("no TTS backend configured yet — set one up in Preferences")),
-        record: Box::new(|| anyhow::bail!("no microphone recording backend configured yet")),
+        record: build_record(),
         play: Box::new(|_| anyhow::bail!("no audio output backend configured yet")),
         score: Box::new(move |r, e| langspark_core::score_pronunciation(r, e, code)),
-        transcribe: Box::new(|_, _| anyhow::bail!("speech recognition is unavailable (see the `asr` feature)")),
+        transcribe: build_transcribe(active_language),
     }
+}
+
+/// Build the `transcribe` callback: runs `SpeechRecognizer` (see `asr.rs`)
+/// against a `qwen3` ASR model directory expected at
+/// `AppDirs::asr_model_dir`. There's no installer for that model yet (unlike
+/// the Japanese dictionary), so this only produces real transcriptions once
+/// one has been placed there by hand *and* langspark-core was built with the
+/// `asr` Cargo feature (needs a native libtorch install) — `SpeechRecognizer`
+/// itself reports a clear "unavailable" error otherwise in both cases, so no
+/// feature-gating is needed here.
+fn build_transcribe(active_language: Language) -> Box<dyn Fn(&[f32], u32) -> anyhow::Result<String> + Send + Sync> {
+    let code = active_language.code().to_string();
+    let model_dir = crate::config::AppDirs::new().map(|d| d.asr_model_dir(&code));
+
+    Box::new(move |samples: &[f32], sample_rate: u32| {
+        let dir = model_dir.clone().ok_or_else(|| anyhow::anyhow!("couldn't determine the ASR model directory"))?;
+        if !dir.exists() {
+            anyhow::bail!(
+                "no speech recognition model installed at {} (needs config.json, model.safetensors, \
+                 tokenizer.json from a qwen3 ASR model)",
+                dir.display()
+            );
+        }
+
+        let recognizer = langspark_core::SpeechRecognizer::new(&code, &dir)?;
+
+        // SpeechRecognizer::transcribe reads a WAV file path rather than raw
+        // samples, so round-trip through a scratch file.
+        let wav = langspark_core::audio::encode_wav(samples, sample_rate)?;
+        let tmp_path = std::env::temp_dir().join(format!("langspark-asr-{}-{}.wav", std::process::id(), code));
+        std::fs::write(&tmp_path, &wav)?;
+        let result = recognizer.transcribe(&tmp_path);
+        let _ = std::fs::remove_file(&tmp_path);
+
+        Ok(result?.text)
+    })
+}
+
+/// How long the Pronunciation tab's "Record" button captures for. There's
+/// only a single Record button (no separate Stop) — see `pronunciation/mod.rs`.
+const RECORDING_DURATION: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Build the `record` callback shared by every language: capture
+/// `RECORDING_DURATION` of audio from the default microphone via `cpal`
+/// (`AudioRecorder`). Doesn't depend on TTS/dictionary availability, so it's
+/// wired the same way regardless of which language is active.
+fn build_record() -> Box<dyn Fn() -> anyhow::Result<(Vec<f32>, u32)> + Send + Sync> {
+    Box::new(|| {
+        // `AudioRecorder` (and the `cpal::Stream` it owns) isn't `Send`, but
+        // that's fine here: it's created, used, and dropped entirely within
+        // this closure's single call to `task::run_blocking`, never crossing
+        // a thread boundary itself — only this closure (which captures
+        // nothing) needs to be `Send`.
+        let recorder = langspark_core::AudioRecorder::start()?;
+        std::thread::sleep(RECORDING_DURATION);
+        Ok(recorder.stop())
+    })
 }
 
 /// Resolve a VOICEVOX speaker ID from the free-text `tts_voice_ja` setting: a
@@ -333,18 +419,19 @@ fn resolve_voicevox_speaker_id(voice: &str) -> u32 {
     }
 }
 
-/// Build the pronunciation tab's playback callbacks. Japanese speaks through
-/// a locally-running VOICEVOX Engine (default `http://127.0.0.1:50021` — the
-/// user must have it running separately; there's no bundled offline engine),
-/// caching synthesized audio to disk so repeat playback of the same word
-/// doesn't re-synthesize it. Spanish stays "unavailable": Piper needs a
-/// downloaded `.onnx` voice model and there's no installer for one yet (see
-/// ROADMAP.md Phase 8), unlike the Japanese dictionary installer in
-/// `installer.rs`. Recording/transcription (speech recognition) are a
-/// separate, still-unimplemented feature (the `asr` module).
-fn pronunciation_callbacks(active_language: Language, settings: &Settings) -> pronunciation::PronunciationCallbacks {
+/// Build a `synthesize(text) -> WAV bytes` closure for `active_language`,
+/// shared between the pronunciation tab's Play button and the vocabulary
+/// detail dialog's Play button (`vocab_play_callback`). `None` if no TTS
+/// backend is available for the language — currently Japanese only (Piper/
+/// Spanish needs a downloaded `.onnx` voice model and there's no installer
+/// for one yet, see ROADMAP.md Phase 8). Synthesized audio is cached to disk
+/// so repeat playback of the same word doesn't re-synthesize it.
+fn build_synthesize(
+    active_language: Language,
+    settings: &Settings,
+) -> Option<Box<dyn Fn(&str) -> anyhow::Result<Vec<u8>> + Send + Sync>> {
     if active_language != Language::Japanese {
-        return unavailable_pronunciation_callbacks(active_language);
+        return None;
     }
 
     let code = active_language.code();
@@ -352,31 +439,108 @@ fn pronunciation_callbacks(active_language: Language, settings: &Settings) -> pr
     let speaker_id = resolve_voicevox_speaker_id(&settings.tts_voice_ja);
     let voice_label = settings.tts_voice_ja.clone();
 
-    let synth_cache_dir = cache_dir.clone();
-    let synth_voice_label = voice_label.clone();
-    let play_cache_dir = cache_dir;
+    Some(Box::new(move |text: &str| {
+        if let Some(dir) = &cache_dir {
+            if let Some(cached) = langspark_core::AudioCache::new(dir.clone()).get(code, &voice_label, text) {
+                return Ok(cached);
+            }
+        }
+        let wav = langspark_core::VoicevoxTts::default_local(speaker_id).synthesize(text)?;
+        if let Some(dir) = &cache_dir {
+            if let Err(e) = langspark_core::AudioCache::new(dir.clone()).put(code, &voice_label, text, &wav) {
+                log::warn!("failed to cache synthesized audio: {e}");
+            }
+        }
+        Ok(wav)
+    }))
+}
+
+/// Build the pronunciation tab's playback callbacks. Japanese speaks through
+/// a locally-running VOICEVOX Engine (default `http://127.0.0.1:50021` — the
+/// user must have it running separately; there's no bundled offline engine).
+/// Spanish stays "unavailable" (see `build_synthesize`). Recording/
+/// transcription (speech recognition) are wired the same way for every
+/// language — see `build_record`/`build_transcribe`.
+fn pronunciation_callbacks(active_language: Language, settings: &Settings) -> pronunciation::PronunciationCallbacks {
+    let code = active_language.code();
+    let Some(synthesize) = build_synthesize(active_language, settings) else {
+        return unavailable_pronunciation_callbacks(active_language);
+    };
+
+    let play_cache_dir = crate::config::AppDirs::new().map(|d| d.audio_cache_dir());
 
     pronunciation::PronunciationCallbacks {
-        synthesize: Box::new(move |text: &str| {
-            if let Some(dir) = &synth_cache_dir {
-                if let Some(cached) = langspark_core::AudioCache::new(dir.clone()).get(code, &synth_voice_label, text) {
-                    return Ok(cached);
-                }
-            }
-            let wav = langspark_core::VoicevoxTts::default_local(speaker_id).synthesize(text)?;
-            if let Some(dir) = &synth_cache_dir {
-                if let Err(e) = langspark_core::AudioCache::new(dir.clone()).put(code, &synth_voice_label, text, &wav) {
-                    log::warn!("failed to cache synthesized audio: {e}");
-                }
-            }
-            Ok(wav)
-        }),
-        record: Box::new(|| anyhow::bail!("no microphone recording backend configured yet")),
+        synthesize,
+        record: build_record(),
         play: Box::new(move |wav: Vec<u8>| {
             let dir = play_cache_dir.clone().unwrap_or_else(std::env::temp_dir);
             langspark_core::AudioManager::new(dir).play(wav)
         }),
         score: Box::new(move |r, e| langspark_core::score_pronunciation(r, e, code)),
-        transcribe: Box::new(|_, _| anyhow::bail!("speech recognition is unavailable (see the `asr` feature)")),
+        transcribe: build_transcribe(active_language),
     }
+}
+
+/// Build the vocabulary detail dialog's Play callback: synthesize + play
+/// `text` in the background, surfacing failures as a toast instead of
+/// silently doing nothing. `None` (button stays disabled) if no TTS backend
+/// is available for `active_language` — see `build_synthesize`.
+fn vocab_play_callback(
+    active_language: Language,
+    settings: &Settings,
+    toast_overlay: &ToastOverlay,
+) -> Option<Rc<dyn Fn(String)>> {
+    let synthesize = build_synthesize(active_language, settings)?;
+    let synthesize = Arc::new(synthesize);
+    let play_cache_dir = crate::config::AppDirs::new().map(|d| d.audio_cache_dir());
+
+    Some(Rc::new(glib::clone!(
+        #[weak]
+        toast_overlay,
+        move |text: String| {
+            let synthesize = synthesize.clone();
+            let play_cache_dir = play_cache_dir.clone();
+            crate::task::spawn_on_main(async move {
+                let result = crate::task::run_blocking(move || -> anyhow::Result<()> {
+                    let wav = synthesize(&text)?;
+                    let dir = play_cache_dir.clone().unwrap_or_else(std::env::temp_dir);
+                    langspark_core::AudioManager::new(dir).play(wav)
+                })
+                .await;
+                if let Err(e) = result {
+                    diagnostics::show_error_toast(&toast_overlay, &format!("Couldn't play pronunciation: {e}"));
+                }
+            });
+        }
+    )))
+}
+
+/// Build the vocabulary detail dialog's Delete callback: deletes the entry
+/// (and any SRS cards referencing it — see `SqliteVocabularyRepository::delete`)
+/// in the background. The dialog itself closes optimistically before this
+/// completes (see `vocabulary/dialog.rs`), so failures are surfaced only via
+/// a toast, not by reopening the dialog.
+fn vocab_delete_callback(
+    state: &Arc<AppState>,
+    toast_overlay: &ToastOverlay,
+) -> Rc<dyn Fn(i64, Box<dyn Fn()>, Box<dyn Fn()>)> {
+    Rc::new(glib::clone!(
+        #[strong]
+        state,
+        #[weak]
+        toast_overlay,
+        move |id: i64, on_done: Box<dyn Fn()>, on_error: Box<dyn Fn()>| {
+            let state = state.clone();
+            crate::task::spawn_on_main(async move {
+                let result = crate::task::run_blocking(move || state.vocabulary_repo.delete(id)).await;
+                match result {
+                    Ok(()) => on_done(),
+                    Err(e) => {
+                        diagnostics::show_error_toast(&toast_overlay, &format!("Failed to delete word: {e}"));
+                        on_error();
+                    }
+                }
+            });
+        }
+    ))
 }

@@ -1,5 +1,10 @@
 //! Vocabulary detail dialog: large word display, meaning/POS/level, example
-//! sentence, audio controls, "practice pronunciation", add-to-deck, edit/delete.
+//! sentence, audio playback, delete.
+//!
+//! Practice-navigation, add-to-deck, and edit were removed rather than left
+//! as inert buttons: none of them has a real backing UI yet (a way to jump
+//! the pronunciation tab to a specific word, a deck picker, an edit form).
+//! Re-add them once that UI exists.
 
 use adw::prelude::*;
 use gtk4::{Box as GtkBox, Label, Orientation};
@@ -7,10 +12,13 @@ use langspark_core::VocabularyEntry;
 
 /// Callbacks for the actions available from the detail dialog.
 pub struct VocabularyDialogCallbacks {
-    pub on_play_audio: Box<dyn Fn() + 'static>,
-    pub on_practice: Box<dyn Fn() + 'static>,
-    pub on_add_to_deck: Box<dyn Fn() + 'static>,
-    pub on_edit: Box<dyn Fn() + 'static>,
+    /// Speak the word aloud. `None` if no TTS backend is available for the
+    /// active language — the Play button is omitted entirely rather than
+    /// shown disabled with no explanation.
+    pub on_play_audio: Option<Box<dyn Fn() + 'static>>,
+    /// Delete this entry. The dialog closes immediately (optimistic UI); if
+    /// the underlying delete fails, the caller is responsible for surfacing
+    /// that separately (e.g. a toast) since the dialog is already gone.
     pub on_delete: Box<dyn Fn() + 'static>,
 }
 
@@ -54,28 +62,27 @@ pub fn build(entry: &VocabularyEntry, callbacks: VocabularyDialogCallbacks) -> a
 
     let action_box = GtkBox::new(Orientation::Horizontal, 8);
     action_box.set_margin_top(12);
-    let play_btn = gtk4::Button::builder().label("▶ Play").build();
-    let practice_btn = gtk4::Button::builder().label("Practice Pronunciation").css_classes(["suggested-action"]).build();
-    let add_deck_btn = gtk4::Button::builder().label("Add to Deck").build();
-    action_box.append(&play_btn);
-    action_box.append(&practice_btn);
-    action_box.append(&add_deck_btn);
+    if let Some(on_play_audio) = callbacks.on_play_audio {
+        let play_btn = gtk4::Button::builder().label("▶ Play").css_classes(["suggested-action"]).build();
+        play_btn.connect_clicked(move |_| on_play_audio());
+        action_box.append(&play_btn);
+    }
+    let delete_btn = gtk4::Button::builder().label("Delete").css_classes(["destructive-action"]).build();
+    action_box.append(&delete_btn);
     root.append(&action_box);
 
-    let edit_box = GtkBox::new(Orientation::Horizontal, 8);
-    let edit_btn = gtk4::Button::builder().label("Edit").build();
-    let delete_btn = gtk4::Button::builder().label("Delete").css_classes(["destructive-action"]).build();
-    edit_box.append(&edit_btn);
-    edit_box.append(&delete_btn);
-    root.append(&edit_box);
+    let dialog = adw::Dialog::builder().title(&entry.word).content_width(420).content_height(420).child(&root).build();
 
-    play_btn.connect_clicked(move |_| (callbacks.on_play_audio)());
-    practice_btn.connect_clicked(move |_| (callbacks.on_practice)());
-    add_deck_btn.connect_clicked(move |_| (callbacks.on_add_to_deck)());
-    edit_btn.connect_clicked(move |_| (callbacks.on_edit)());
-    delete_btn.connect_clicked(move |_| (callbacks.on_delete)());
+    delete_btn.connect_clicked(glib::clone!(
+        #[weak]
+        dialog,
+        move |_| {
+            (callbacks.on_delete)();
+            dialog.close();
+        }
+    ));
 
-    adw::Dialog::builder().title(&entry.word).content_width(420).content_height(480).child(&root).build()
+    dialog
 }
 
 #[cfg(test)]
@@ -98,13 +105,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn noop_callbacks() -> VocabularyDialogCallbacks {
-        VocabularyDialogCallbacks {
-            on_play_audio: Box::new(|| {}),
-            on_practice: Box::new(|| {}),
-            on_add_to_deck: Box::new(|| {}),
-            on_edit: Box::new(|| {}),
-            on_delete: Box::new(|| {}),
-        }
+        VocabularyDialogCallbacks { on_play_audio: Some(Box::new(|| {})), on_delete: Box::new(|| {}) }
     }
 
     // Widget-construction is exercised by the consolidated smoke test in

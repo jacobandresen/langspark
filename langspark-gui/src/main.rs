@@ -114,7 +114,14 @@ mod gtk_smoke {
 
         let vocab_entry = vocabulary::dialog::tests::sample_entry();
         let _vocab_dialog = vocabulary::dialog::build(&vocab_entry, vocabulary::dialog::tests::noop_callbacks());
-        let _vocab_tab = vocabulary::build_tab(&[vocab_entry], None);
+        let _vocab_tab = vocabulary::build_tab(
+            &[vocab_entry],
+            vocabulary::VocabTabCallbacks {
+                add_word: None,
+                on_play: None,
+                delete: std::rc::Rc::new(|_, _, _| {}),
+            },
+        );
 
         let kanji_entry = kanji::dialog::tests::sample_entry();
         let _kanji_dialog = kanji::dialog::build(&kanji_entry);

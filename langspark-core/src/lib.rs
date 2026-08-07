@@ -29,7 +29,7 @@ pub mod tts;
 pub use asr::{SpeechRecognizer, TranscriptionResult};
 pub use audio::{audio_devices_available, list_audio_devices, AudioCache, AudioManager, AudioPlayer, AudioRecorder};
 pub use error::LangSparkError;
-pub use database::{Database, Repository, initialize_schema, Migration};
+pub use database::{Database, Repository, default_migrations, initialize_schema, run_migrations, Migration};
 pub use dictionary::{Dictionary, DictionaryManager, VocabEntry, VocabFilter};
 pub use installer::{install_jmdict, install_kanjidic};
 pub use language::{InstallationStatus, Language, LanguageInfo, LanguageManager, LanguageRegistry};
@@ -45,7 +45,7 @@ pub use repositories::{
     VocabularyEntry,
 };
 pub use srs::{
-    build_review_stats, calculate_retention_rate, calculate_streak, CardState, DeckManager, ReviewStats,
+    build_review_stats, calculate_retention_rate, calculate_streak, CardState, DeckManager, FSRSBackend, ReviewStats,
     SrsBackend, SrsCard, SrsManager, SM2Backend, RATING_AGAIN, RATING_EASY, RATING_GOOD, RATING_HARD,
 };
 pub use tts::{PiperTts, TtsBackend, UnavailableTts, VoiceConfig, VoicevoxTts};

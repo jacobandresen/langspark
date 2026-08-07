@@ -10,12 +10,25 @@ pub use lookup::AddWordCallbacks;
 use adw::prelude::*;
 use gtk4::{Box, FlowBox, Label, Orientation, Revealer, ScrolledWindow};
 use langspark_core::VocabularyEntry;
+use std::boxed::Box as StdBox;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-/// A single vocabulary entry rendered as a clickable card.
-pub fn build_card(entry: &VocabularyEntry) -> gtk4::Button {
+/// Callbacks a card needs to back its detail dialog's Play/Delete buttons.
+/// `remove` is internal (see `build_tab`): it drops the entry from the tab's
+/// live list once `delete` reports success, so the card disappears without
+/// a full reload.
+#[derive(Clone)]
+struct CardCallbacks {
+    on_play: Option<Rc<dyn Fn(String)>>,
+    delete: Rc<dyn Fn(i64, StdBox<dyn Fn()>, StdBox<dyn Fn()>)>,
+    remove: Rc<dyn Fn(i64)>,
+}
+
+/// A single vocabulary entry rendered as a clickable card. Clicking it opens
+/// the detail dialog (`dialog::build`), wired to `callbacks`.
+fn build_card(entry: &VocabularyEntry, callbacks: &CardCallbacks) -> gtk4::Button {
     let content = Box::new(Orientation::Vertical, 4);
     content.set_margin_top(8);
     content.set_margin_bottom(8);
@@ -40,12 +53,35 @@ pub fn build_card(entry: &VocabularyEntry) -> gtk4::Button {
 
     let card = gtk4::Button::builder().child(&content).css_classes(["card", "langspark-card"]).build();
     card.set_tooltip_text(Some(&entry.meaning));
+
+    let dialog_entry = entry.clone();
+    let callbacks = callbacks.clone();
+    card.connect_clicked(move |btn| {
+        let speak_text = dialog_entry.reading.clone().unwrap_or_else(|| dialog_entry.word.clone());
+        let on_play_audio: Option<StdBox<dyn Fn()>> = callbacks
+            .on_play
+            .clone()
+            .map(|on_play| StdBox::new(move || on_play(speak_text.clone())) as StdBox<dyn Fn()>);
+
+        let id = dialog_entry.id;
+        let delete = callbacks.delete.clone();
+        let remove = callbacks.remove.clone();
+        let on_delete: StdBox<dyn Fn()> = StdBox::new(move || {
+            let Some(id) = id else { return };
+            let remove = remove.clone();
+            delete(id, StdBox::new(move || remove(id)), StdBox::new(|| {}));
+        });
+
+        let dialog = dialog::build(&dialog_entry, dialog::VocabularyDialogCallbacks { on_play_audio, on_delete });
+        dialog.present(Some(btn));
+    });
+
     card
 }
 
 /// A labeled section (e.g. "N4") showing a horizontal strip of its entries
 /// with a "Show All" toggle that reveals the rest in a wrapping grid.
-fn build_section(level: &str, entries: &[&VocabularyEntry]) -> gtk4::Box {
+fn build_section(level: &str, entries: &[&VocabularyEntry], callbacks: &CardCallbacks) -> gtk4::Box {
     let section = Box::new(Orientation::Vertical, 4);
 
     let header = Box::new(Orientation::Horizontal, 8);
@@ -65,7 +101,7 @@ fn build_section(level: &str, entries: &[&VocabularyEntry]) -> gtk4::Box {
     let strip = Box::new(Orientation::Horizontal, 8);
     strip.set_margin_top(4);
     for entry in entries.iter().take(6) {
-        strip.append(&build_card(entry));
+        strip.append(&build_card(entry, callbacks));
     }
     let strip_scroller = ScrolledWindow::builder()
         .hscrollbar_policy(gtk4::PolicyType::Automatic)
@@ -77,7 +113,7 @@ fn build_section(level: &str, entries: &[&VocabularyEntry]) -> gtk4::Box {
     // Full grid, revealed by "Show All".
     let grid = FlowBox::builder().selection_mode(gtk4::SelectionMode::None).max_children_per_line(6).build();
     for entry in entries {
-        grid.insert(&build_card(entry), -1);
+        grid.insert(&build_card(entry, callbacks), -1);
     }
     let revealer = Revealer::builder()
         .transition_type(gtk4::RevealerTransitionType::SlideDown)
@@ -99,14 +135,31 @@ fn build_section(level: &str, entries: &[&VocabularyEntry]) -> gtk4::Box {
     section
 }
 
+/// Callbacks the vocabulary tab needs from the host application.
+pub struct VocabTabCallbacks {
+    /// `Some` (showing an "Add Word" button) when a dictionary is installed
+    /// for the active language.
+    pub add_word: Option<AddWordCallbacks>,
+    /// Speak a word/reading aloud, from the detail dialog. `None` if no TTS
+    /// backend is available for the active language.
+    pub on_play: Option<Rc<dyn Fn(String)>>,
+    /// Delete a vocabulary entry by id, from the detail dialog. Must call
+    /// exactly one of the two callbacks once the (asynchronous) delete
+    /// completes.
+    pub delete: Rc<dyn Fn(i64, StdBox<dyn Fn()>, StdBox<dyn Fn()>)>,
+}
+
 /// Build the vocabulary tab's root widget: a search box (plus an "Add Word"
-/// button when `add_word` is `Some`, i.e. a dictionary is installed for the
-/// active language) followed by entries grouped by `level` (falling back to
-/// "Uncategorized"), each its own section. All entries are loaded up front
-/// (see `state::AppState`), so search/filter is done client-side by
-/// rebuilding the sections on each keystroke. Words added via the dictionary
-/// lookup dialog are appended to the live list without a full rebuild.
-pub fn build_tab(entries: &[VocabularyEntry], add_word: Option<AddWordCallbacks>) -> gtk4::Widget {
+/// button when `callbacks.add_word` is `Some`, i.e. a dictionary is
+/// installed for the active language) followed by entries grouped by
+/// `level` (falling back to "Uncategorized"), each its own section. All
+/// entries are loaded up front (see `state::AppState`), so search/filter is
+/// done client-side by rebuilding the sections on each keystroke. Words
+/// added via the dictionary lookup dialog, or deleted via a card's detail
+/// dialog, are appended to/dropped from the live list without a full reload.
+pub fn build_tab(entries: &[VocabularyEntry], callbacks: VocabTabCallbacks) -> gtk4::Widget {
+    let VocabTabCallbacks { add_word, on_play, delete } = callbacks;
+
     let root = Box::new(Orientation::Vertical, 12);
     root.set_margin_top(12);
     root.set_margin_bottom(12);
@@ -123,12 +176,18 @@ pub fn build_tab(entries: &[VocabularyEntry], add_word: Option<AddWordCallbacks>
 
     let entries_state: Rc<RefCell<Vec<VocabularyEntry>>> = Rc::new(RefCell::new(entries.to_vec()));
     let query_state: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    // Populated below, once `remove` (which itself needs `render`) exists —
+    // `render` reads through this cell rather than capturing `CardCallbacks`
+    // directly to break that cycle.
+    let card_callbacks: Rc<RefCell<Option<CardCallbacks>>> = Rc::new(RefCell::new(None));
 
     let render = glib::clone!(
         #[weak]
         sections_box,
         #[strong]
         entries_state,
+        #[strong]
+        card_callbacks,
         move |query: &str| {
             while let Some(child) = sections_box.first_child() {
                 sections_box.remove(&child);
@@ -148,12 +207,13 @@ pub fn build_tab(entries: &[VocabularyEntry], add_word: Option<AddWordCallbacks>
                 let level = entry.level.clone().unwrap_or_else(|| "Uncategorized".to_string());
                 by_level.entry(level).or_default().push(entry);
             }
+            let card_callbacks = card_callbacks.borrow();
+            let card_callbacks = card_callbacks.as_ref().expect("card_callbacks set before first render");
             for (level, level_entries) in &by_level {
-                sections_box.append(&build_section(level, level_entries));
+                sections_box.append(&build_section(level, level_entries, card_callbacks));
             }
         }
     );
-    render("");
 
     search.connect_search_changed(glib::clone!(
         #[strong]
@@ -179,6 +239,21 @@ pub fn build_tab(entries: &[VocabularyEntry], add_word: Option<AddWordCallbacks>
             render(&query_state.borrow());
         }
     ));
+
+    let remove: Rc<dyn Fn(i64)> = Rc::new(glib::clone!(
+        #[strong]
+        entries_state,
+        #[strong]
+        query_state,
+        #[strong]
+        render,
+        move |id: i64| {
+            entries_state.borrow_mut().retain(|e| e.id != Some(id));
+            render(&query_state.borrow());
+        }
+    ));
+    *card_callbacks.borrow_mut() = Some(CardCallbacks { on_play, delete, remove });
+    render("");
 
     if let Some(add_word) = add_word {
         let add_btn = gtk4::Button::builder().label("Add Word").valign(gtk4::Align::Center).build();

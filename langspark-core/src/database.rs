@@ -185,6 +185,25 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrations for schema changes made after `initialize_schema`'s original
+/// `CREATE TABLE IF NOT EXISTS` statements — safe to run against any
+/// database, freshly created or pre-existing, via `run_migrations` (already-
+/// applied migrations are skipped).
+pub fn default_migrations() -> Vec<Migration> {
+    vec![
+        Migration::new(
+            1,
+            "add FSRS stability column to srs_cards",
+            "ALTER TABLE srs_cards ADD COLUMN stability REAL NOT NULL DEFAULT 0",
+        ),
+        Migration::new(
+            2,
+            "add FSRS difficulty column to srs_cards",
+            "ALTER TABLE srs_cards ADD COLUMN difficulty REAL NOT NULL DEFAULT 0",
+        ),
+    ]
+}
+
 /// Database migration system
 pub struct Migration {
     version: u32,

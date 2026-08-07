@@ -225,10 +225,20 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
 
     let ease_row = adw::SpinRow::builder()
         .title("Starting ease factor")
-        .subtitle("Higher means faster-growing review intervals")
-        .adjustment(&gtk4::Adjustment::new(2.5, 1.3, 3.0, 0.1, 0.1, 0.0))
+        .subtitle("Higher means faster-growing review intervals (SM-2 only; FSRS derives its own)")
+        .adjustment(&gtk4::Adjustment::new(settings.borrow().starting_ease_factor, 1.3, 3.0, 0.1, 0.1, 0.0))
         .digits(1)
         .build();
+    ease_row.connect_value_notify(glib::clone!(
+        #[strong]
+        settings,
+        #[strong]
+        on_save,
+        move |row| {
+            settings.borrow_mut().starting_ease_factor = row.value();
+            on_save(&settings.borrow());
+        }
+    ));
     srs_group.add(&ease_row);
     study_page.add(&srs_group);
 

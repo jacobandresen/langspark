@@ -73,6 +73,14 @@ pub struct SrsCard {
     pub language: String,
     /// Creation timestamp
     pub created_at: Option<String>,
+    /// FSRS memory stability in days (how long until recall probability
+    /// decays to ~90%). Unused by `SM2Backend`. `0.0` until the card has had
+    /// its first FSRS-scored review — FSRS derives the initial value from
+    /// the first rating rather than at card creation.
+    pub stability: f64,
+    /// FSRS difficulty, 1 (easiest) to 10 (hardest). Unused by `SM2Backend`.
+    /// `0.0` until the card has had its first FSRS-scored review.
+    pub difficulty: f64,
 }
 
 impl SrsCard {
@@ -91,6 +99,8 @@ impl SrsCard {
             last_reviewed: None,
             language: language.to_string(),
             created_at: None,
+            stability: 0.0,
+            difficulty: 0.0,
         }
     }
 
@@ -255,6 +265,216 @@ impl SrsBackend for SM2Backend {
     }
 }
 
+// ---------------------------------------------------------------------
+// FSRS (Free Spaced Repetition Scheduler)
+// ---------------------------------------------------------------------
+
+/// FSRS scheduler: models memory as a (stability, difficulty) pair per card
+/// rather than SM-2's single ease factor, and schedules the next review for
+/// whenever predicted recall probability decays to `desired_retention`.
+///
+/// Follows the FSRS algorithm's general structure (initial stability/
+/// difficulty from the first rating, a power-function forgetting curve, and
+/// separate stability-growth/stability-after-lapse formulas) with 17 tunable
+/// weights. **The default weights below are reasonable placeholders modeled
+/// on FSRS's published parameter roles, not a verified byte-for-byte copy of
+/// the official reference implementation's fitted values** — FSRS is
+/// normally most accurate when its weights are re-fit to a user's own review
+/// history via its optimizer, which this project doesn't implement. Treat
+/// this as "FSRS-shaped scheduling that works out of the box," not a
+/// certified match to Anki's FSRS.
+pub struct FSRSBackend {
+    /// w[0..4]: initial stability (days) for first rating Again/Hard/Good/Easy.
+    /// w[4],w[5]: initial difficulty base/scale. w[6]: difficulty delta per
+    /// grade. w[7]: difficulty mean-reversion weight. w[8..11]: stability
+    /// growth on success. w[11..15]: stability after a lapse (Again).
+    /// w[15]: Hard penalty. w[16]: Easy bonus.
+    weights: [f64; 17],
+    /// Target recall probability at the scheduled review date (FSRS default: 0.9).
+    desired_retention: f64,
+}
+
+impl Default for FSRSBackend {
+    fn default() -> Self {
+        Self {
+            weights: [
+                0.4, 0.9, 2.3, 10.9, // w0-3: initial stability by first rating
+                5.0, 1.0, // w4, w5: initial difficulty base/scale
+                0.9, // w6: difficulty delta per grade
+                0.02, // w7: difficulty mean reversion
+                1.5, 0.15, 0.85, // w8-10: stability growth on success
+                1.2, 0.35, 1.05, 0.35, // w11-14: stability after lapse
+                0.6, // w15: Hard penalty
+                1.4, // w16: Easy bonus
+            ],
+            desired_retention: 0.9,
+        }
+    }
+}
+
+impl FSRSBackend {
+    /// Use `desired_retention` (0.0-1.0 recall probability target) instead
+    /// of FSRS's default 0.9.
+    pub fn with_desired_retention(desired_retention: f64) -> Self {
+        Self { desired_retention, ..Self::default() }
+    }
+
+    const MIN_DIFFICULTY: f64 = 1.0;
+    const MAX_DIFFICULTY: f64 = 10.0;
+    const MIN_STABILITY: f64 = 0.01;
+
+    /// Days since `card.last_reviewed` (0 if never reviewed, i.e. a New card).
+    fn elapsed_days(&self, card: &SrsCard) -> f64 {
+        let Some(last) = &card.last_reviewed else { return 0.0 };
+        let Ok(last_date) = chrono::NaiveDate::parse_from_str(last, "%Y-%m-%d") else { return 0.0 };
+        let today = chrono::Local::now().date_naive();
+        (today - last_date).num_days().max(0) as f64
+    }
+
+    /// Predicted recall probability after `elapsed` days, given stability
+    /// `s` (days) — FSRS's power-function forgetting curve, calibrated so
+    /// R(t=s) ≈ 0.9.
+    fn retrievability(&self, elapsed: f64, s: f64) -> f64 {
+        if s <= 0.0 {
+            return 0.0;
+        }
+        (1.0 + elapsed / (9.0 * s)).powf(-1.0)
+    }
+
+    /// Initial stability (days) from the first rating given to a New card.
+    fn init_stability(&self, rating: u32) -> f64 {
+        let idx = (rating.clamp(RATING_AGAIN, RATING_EASY) - 1) as usize;
+        self.weights[idx].max(Self::MIN_STABILITY)
+    }
+
+    /// Initial difficulty (1-10) from the first rating given to a New card.
+    fn init_difficulty(&self, rating: u32) -> f64 {
+        let d = self.weights[4] - (rating as f64 - 3.0) * self.weights[5];
+        d.clamp(Self::MIN_DIFFICULTY, Self::MAX_DIFFICULTY)
+    }
+
+    /// Next difficulty after a review, with mean reversion toward the
+    /// "reviewed Good from new" difficulty so cards don't drift indefinitely.
+    fn next_difficulty(&self, card: &SrsCard, rating: u32) -> f64 {
+        let w6 = self.weights[6];
+        let w7 = self.weights[7];
+        let updated = card.difficulty - (rating as f64 - 3.0) * w6;
+        let reverted = w7 * self.init_difficulty(RATING_GOOD) + (1.0 - w7) * updated;
+        reverted.clamp(Self::MIN_DIFFICULTY, Self::MAX_DIFFICULTY)
+    }
+
+    /// Stability after a successful recall (Hard/Good/Easy).
+    fn stability_after_success(&self, card: &SrsCard, rating: u32, r: f64) -> f64 {
+        let (w8, w9, w10) = (self.weights[8], self.weights[9], self.weights[10]);
+        let hard_penalty = if rating == RATING_HARD { self.weights[15] } else { 1.0 };
+        let easy_bonus = if rating == RATING_EASY { self.weights[16] } else { 1.0 };
+        let d = card.difficulty;
+        let s = card.stability;
+        let growth =
+            1.0 + (w8.exp()) * (11.0 - d) * s.powf(-w9) * (((1.0 - r) * w10).exp() - 1.0) * hard_penalty * easy_bonus;
+        (s * growth.max(0.0)).max(Self::MIN_STABILITY)
+    }
+
+    /// Stability after a lapse (Again on a card that had a stability already).
+    fn stability_after_lapse(&self, card: &SrsCard, r: f64) -> f64 {
+        let (w11, w12, w13, w14) = (self.weights[11], self.weights[12], self.weights[13], self.weights[14]);
+        let d = card.difficulty.max(Self::MIN_DIFFICULTY);
+        let s = w11 * d.powf(-w12) * (((card.stability + 1.0).powf(w13)) - 1.0) * (((1.0 - r) * w14).exp());
+        s.max(Self::MIN_STABILITY)
+    }
+
+    /// The (stability, difficulty) this card would have after `rating`,
+    /// without mutating it — shared by `next_interval` (preview) and
+    /// `update_card` (commit).
+    fn next_stability_and_difficulty(&self, card: &SrsCard, rating: u32) -> (f64, f64) {
+        if card.state == CardState::New {
+            return (self.init_stability(rating), self.init_difficulty(rating));
+        }
+        let elapsed = self.elapsed_days(card);
+        let r = self.retrievability(elapsed, card.stability);
+        let difficulty = self.next_difficulty(card, rating);
+        let stability = if rating == RATING_AGAIN {
+            self.stability_after_lapse(card, r)
+        } else {
+            self.stability_after_success(card, rating, r)
+        };
+        (stability, difficulty)
+    }
+}
+
+impl SrsBackend for FSRSBackend {
+    fn next_interval(&self, card: &SrsCard, rating: u32) -> i32 {
+        let (stability, _) = self.next_stability_and_difficulty(card, rating);
+        if rating == RATING_AGAIN && card.state != CardState::New {
+            // A lapse always drops back into short-term (re)learning, not a
+            // multi-day interval derived from the (now much lower) stability.
+            return 0;
+        }
+        // Solve retrievability(t, stability) = desired_retention for t.
+        let interval = 9.0 * stability * (1.0 / self.desired_retention - 1.0);
+        interval.round().max(1.0) as i32
+    }
+
+    fn update_card(&self, card: &mut SrsCard, rating: u32) {
+        let (stability, difficulty) = self.next_stability_and_difficulty(card, rating);
+        let new_interval = self.next_interval(card, rating);
+
+        // State transitions mirror SM2Backend's for consistency in the UI
+        // (both backends expose the same New/Learning/Review lifecycle).
+        card.state = match card.state {
+            CardState::New => {
+                if rating >= RATING_GOOD {
+                    CardState::Learning
+                } else {
+                    CardState::New
+                }
+            }
+            CardState::Learning => {
+                if rating >= RATING_GOOD {
+                    CardState::Review
+                } else {
+                    CardState::New
+                }
+            }
+            CardState::Review => {
+                if rating == RATING_AGAIN {
+                    CardState::Learning
+                } else {
+                    CardState::Review
+                }
+            }
+        };
+
+        card.repetitions = match (card.state.clone(), rating) {
+            (CardState::Learning, RATING_AGAIN) => 0,
+            (CardState::Review, RATING_AGAIN) => 0,
+            (CardState::Review, RATING_HARD) => card.repetitions,
+            (CardState::Review, RATING_GOOD) => card.repetitions + 1,
+            (CardState::Review, RATING_EASY) => card.repetitions + 2,
+            _ => card.repetitions + 1,
+        };
+
+        card.stability = stability;
+        card.difficulty = difficulty;
+        card.interval_days = new_interval;
+
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        card.last_reviewed = Some(today.clone());
+        if new_interval > 0 {
+            let next_date = chrono::Local::now() + Duration::days(new_interval as i64);
+            card.next_review_date = Some(next_date.format("%Y-%m-%d").to_string());
+        } else {
+            card.next_review_date = Some(today);
+        }
+    }
+
+    fn next_review_date(&self, card: &SrsCard, rating: u32) -> String {
+        let interval = self.next_interval(card, rating);
+        let today = chrono::Local::now();
+        (today + Duration::days(interval as i64)).format("%Y-%m-%d").to_string()
+    }
+}
+
 /// Manages all SRS cards and scheduling
 ///
 /// Unlike the stateless helpers below (which operate on caller-supplied
@@ -334,6 +554,17 @@ impl SrsManager {
     pub fn process_review(&self, mut card: SrsCard, rating: u32) -> SrsCard {
         let backend = SM2Backend;
         backend.update_card(&mut card, rating);
+        card
+    }
+
+    /// Like `process_review`, but with the backend selected by `algorithm`
+    /// ("fsrs" for `FSRSBackend`, anything else falls back to SM-2).
+    pub fn process_review_with_algorithm(&self, mut card: SrsCard, rating: u32, algorithm: &str) -> SrsCard {
+        if algorithm == "fsrs" {
+            FSRSBackend::default().update_card(&mut card, rating);
+        } else {
+            SM2Backend.update_card(&mut card, rating);
+        }
         card
     }
 
@@ -676,5 +907,113 @@ mod tests {
         let mut card = SrsCard::new("vocabulary", "ja");
         card.id = Some(101);
         assert_eq!(manager.due_count_in_deck(1, &[card]), 1);
+    }
+
+    // -------------------------------------------------------------------
+    // FSRSBackend
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_fsrs_first_review_initializes_stability_and_difficulty() {
+        let backend = FSRSBackend::default();
+        let mut card = SrsCard::new("vocabulary", "ja");
+        assert_eq!(card.stability, 0.0);
+        assert_eq!(card.difficulty, 0.0);
+
+        backend.update_card(&mut card, RATING_GOOD);
+
+        assert!(card.stability > 0.0);
+        assert!((1.0..=10.0).contains(&card.difficulty));
+        assert_eq!(card.state, CardState::Learning);
+        assert!(card.interval_days >= 1);
+        assert!(card.next_review_date.is_some());
+    }
+
+    #[test]
+    fn test_fsrs_easy_grants_more_stability_than_again() {
+        let backend = FSRSBackend::default();
+        let mut easy_card = SrsCard::new("vocabulary", "ja");
+        backend.update_card(&mut easy_card, RATING_EASY);
+
+        let mut again_card = SrsCard::new("vocabulary", "ja");
+        backend.update_card(&mut again_card, RATING_AGAIN);
+
+        assert!(easy_card.stability > again_card.stability);
+        // A first-review lapse shouldn't leave the card in New forever, but
+        // it also shouldn't advance past Learning like a pass does.
+        assert_eq!(again_card.state, CardState::New);
+    }
+
+    #[test]
+    fn test_fsrs_lapse_after_review_resets_to_learning_and_shrinks_interval() {
+        let backend = FSRSBackend::default();
+        let mut card = SrsCard::new("vocabulary", "ja");
+        backend.update_card(&mut card, RATING_GOOD);
+        backend.update_card(&mut card, RATING_GOOD); // now in Review with some stability
+        assert_eq!(card.state, CardState::Review);
+        let stability_before_lapse = card.stability;
+
+        backend.update_card(&mut card, RATING_AGAIN);
+
+        assert_eq!(card.state, CardState::Learning);
+        assert_eq!(card.repetitions, 0);
+        // A lapse always schedules a same-day (re-)review, not a multi-day gap.
+        assert_eq!(card.interval_days, 0);
+        assert!(card.stability < stability_before_lapse);
+    }
+
+    #[test]
+    fn test_fsrs_stability_grows_across_repeated_good_reviews() {
+        let backend = FSRSBackend::default();
+        let mut card = SrsCard::new("vocabulary", "ja");
+        let mut stabilities = Vec::new();
+        for _ in 0..4 {
+            backend.update_card(&mut card, RATING_GOOD);
+            stabilities.push(card.stability);
+            // Simulate time passing so the next review isn't computed at
+            // elapsed=0 (which would otherwise floor retrievability oddly).
+            card.last_reviewed = Some(
+                (chrono::Local::now() - Duration::days(card.interval_days as i64)).format("%Y-%m-%d").to_string(),
+            );
+        }
+        // Consecutive successful reviews should grow (non-decreasing) stability.
+        for window in stabilities.windows(2) {
+            assert!(window[1] >= window[0], "stability should not shrink on repeated Good ratings: {stabilities:?}");
+        }
+    }
+
+    #[test]
+    fn test_fsrs_higher_desired_retention_yields_shorter_intervals() {
+        let mut card = SrsCard::new("vocabulary", "ja");
+        FSRSBackend::default().update_card(&mut card, RATING_GOOD);
+
+        let relaxed = FSRSBackend::with_desired_retention(0.7).next_interval(&card, RATING_GOOD);
+        let strict = FSRSBackend::with_desired_retention(0.97).next_interval(&card, RATING_GOOD);
+
+        assert!(strict < relaxed, "aiming for higher retention should schedule sooner: strict={strict} relaxed={relaxed}");
+    }
+
+    #[test]
+    fn test_fsrs_difficulty_stays_in_bounds_across_many_reviews() {
+        let backend = FSRSBackend::default();
+        let mut card = SrsCard::new("vocabulary", "ja");
+        for rating in [RATING_AGAIN, RATING_EASY, RATING_AGAIN, RATING_HARD, RATING_GOOD, RATING_EASY].repeat(5) {
+            backend.update_card(&mut card, rating);
+            assert!((1.0..=10.0).contains(&card.difficulty), "difficulty out of bounds: {}", card.difficulty);
+            assert!(card.stability >= 0.01, "stability collapsed to non-positive: {}", card.stability);
+        }
+    }
+
+    #[test]
+    fn test_srs_manager_process_review_with_algorithm_selects_backend() {
+        let manager = SrsManager::new();
+        let card = SrsCard::new("vocabulary", "ja");
+
+        let sm2_result = manager.process_review_with_algorithm(card.clone(), RATING_GOOD, "sm2");
+        assert!((sm2_result.ease_factor - 2.5).abs() < f64::EPSILON); // SM-2 leaves ease factor unchanged on Good
+        assert_eq!(sm2_result.stability, 0.0); // SM-2 never touches FSRS fields
+
+        let fsrs_result = manager.process_review_with_algorithm(card, RATING_GOOD, "fsrs");
+        assert!(fsrs_result.stability > 0.0);
     }
 }

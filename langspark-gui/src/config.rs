@@ -19,6 +19,9 @@ pub struct Settings {
     pub tts_voice_es: String,
     /// "sm2" or "fsrs"
     pub srs_algorithm: String,
+    /// Initial ease factor assigned to newly-created SRS cards (SM-2 range
+    /// 1.3-3.0; ignored by FSRS, which derives its own initial difficulty).
+    pub starting_ease_factor: f64,
     /// "system", "light", or "dark"
     pub ui_theme: String,
     /// CPAL input device name, or None for the system default
@@ -35,6 +38,7 @@ impl Default for Settings {
             tts_voice_ja: "zundamon".to_string(),
             tts_voice_es: "es_es-mls-medium".to_string(),
             srs_algorithm: "sm2".to_string(),
+            starting_ease_factor: 2.5,
             ui_theme: "system".to_string(),
             audio_input_device: None,
             audio_output_device: None,
@@ -118,6 +122,15 @@ impl AppDirs {
     pub fn audio_cache_dir(&self) -> PathBuf {
         self.dirs.cache_dir().join("audio")
     }
+
+    /// Where a `qwen3` ASR model directory (`config.json`, `model.safetensors`,
+    /// `tokenizer.json`) is expected for `language_code`, e.g. `asr/ja/`.
+    /// There's no automated installer for these yet (unlike the Japanese
+    /// dictionary — see `installer.rs`), so this only matters once one has
+    /// been placed there manually and the `asr` Cargo feature is enabled.
+    pub fn asr_model_dir(&self, language_code: &str) -> PathBuf {
+        self.dirs.data_dir().join("asr").join(language_code)
+    }
 }
 
 #[cfg(test)]
@@ -188,6 +201,7 @@ mod tests {
             assert!(dirs.database_file().ends_with("langspark.db"));
             assert!(dirs.dictionaries_dir().ends_with("dictionaries"));
             assert!(dirs.audio_cache_dir().ends_with("audio"));
+            assert!(dirs.asr_model_dir("ja").ends_with("asr/ja"));
         }
     }
 }

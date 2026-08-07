@@ -34,3 +34,9 @@ thiserror = "2.0.19"
 assert_cmd = "2.0"
 predicates = "3.0"
 tempfile = "3.27.0"
+
+[features]
+# Real speech recognition (langspark-core's `qwen3-asr-rs`-backed
+# SpeechRecognizer). Requires a native libtorch install; off by default so
+# the app builds and degrades gracefully without it (see asr.rs).
+asr = ["langspark-core/asr"]
