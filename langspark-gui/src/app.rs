@@ -445,7 +445,7 @@ fn build_record(device_name: Option<String>) -> Box<dyn Fn() -> anyhow::Result<(
 /// `build_synthesize`'s normal "couldn't reach VOICEVOX Engine" error path.
 pub fn spawn_voicevox_engine_if_installed(dirs: Option<&crate::config::AppDirs>) {
     let Some(dirs) = dirs else { return };
-    let run_path = dirs.voicevox_engine_dir().join("run");
+    let run_path = dirs.voicevox_engine_dir().join(langspark_core::voicevox_run_executable_name());
     if !run_path.exists() {
         return;
     }

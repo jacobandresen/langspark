@@ -241,15 +241,27 @@ const VOICEVOX_RELEASES_API: &str = "https://api.github.com/repos/VOICEVOX/voice
 
 /// The VOICEVOX Engine release asset name segment identifying this CPU
 /// platform (e.g. `"linux-cpu-x64"`) — `None` if VOICEVOX doesn't publish a
-/// prebuilt CPU engine for it. Only Linux x86_64/aarch64 are handled: those
-/// are the platforms this project's own install scripts (`scripts/
-/// install.sh`) support running LangSpark on at all. Other platforms (or
-/// GPU builds) fall back to `scripts/setup-voicevox.sh`'s Docker path.
+/// prebuilt CPU engine for it. Covers Linux x86_64/aarch64 and Windows
+/// x86_64 (VOICEVOX's own asset naming doesn't distinguish Windows
+/// architectures the way Linux's does). macOS and GPU builds (`-nvidia`/
+/// `-directml`) fall back to `scripts/setup-voicevox.sh`'s Docker path.
 fn voicevox_platform() -> Option<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => Some("linux-cpu-x64"),
         ("linux", "aarch64") => Some("linux-cpu-arm64"),
+        ("windows", "x86_64") => Some("windows-cpu"),
         _ => None,
+    }
+}
+
+/// The VOICEVOX Engine's entry-point executable name within its install
+/// directory — `run.exe` on Windows, `run` everywhere else this project
+/// installs a native engine for (see `voicevox_platform`).
+pub fn voicevox_run_executable_name() -> &'static str {
+    if cfg!(windows) {
+        "run.exe"
+    } else {
+        "run"
     }
 }
 
@@ -264,12 +276,14 @@ fn select_voicevox_asset<'a>(assets: &'a [GithubAsset], platform: &str) -> Optio
 /// Download and install a native VOICEVOX Engine build (see
 /// `voicevox_platform` for which platforms) to `dest_dir` — no Docker
 /// needed, unlike `scripts/setup-voicevox.sh`. The `.vvpp` release asset is
-/// a plain zip of the engine's install directory (a `run` executable,
-/// bundled ONNX runtime, and ~1.5GB of voice model weights — the download is
-/// large, around 2GB); extracted as-is, then `run` is marked executable.
-/// `langspark-gui` starts `<dest_dir>/run --host 127.0.0.1 --port 50021` to
-/// actually run it — this only installs the files. Returns the installed
-/// release version.
+/// a plain zip of the engine's install directory (a `run`/`run.exe`
+/// executable — see `voicevox_run_executable_name` — bundled ONNX runtime,
+/// and ~1.5GB of voice model weights, so the download is large, around
+/// 2GB); extracted as-is, then the executable is marked runnable on Unix
+/// (Windows `.exe` files need no such marking). `langspark-gui` starts
+/// `<dest_dir>/<run executable> --host 127.0.0.1 --port 50021` to actually
+/// run it — this only installs the files. Returns the installed release
+/// version.
 pub fn install_voicevox_engine(dest_dir: &Path, on_progress: &ProgressFn) -> Result<String> {
     let platform = voicevox_platform().context(
         "no native VOICEVOX Engine build for this OS/CPU architecture — see \
@@ -301,7 +315,8 @@ pub fn install_voicevox_engine(dest_dir: &Path, on_progress: &ProgressFn) -> Res
     let _ = std::fs::remove_file(&tmp_zip);
 
     #[cfg(unix)]
-    mark_executable(&dest_dir.join("run")).context("failed to make the VOICEVOX Engine's 'run' executable")?;
+    mark_executable(&dest_dir.join(voicevox_run_executable_name()))
+        .context("failed to make the VOICEVOX Engine executable")?;
 
     Ok(release.tag_name)
 }
@@ -451,7 +466,17 @@ mod tests {
     #[test]
     fn test_select_voicevox_asset_no_match_for_unbuilt_platform() {
         let assets = vec![asset("voicevox_engine-linux-cpu-x64-0.25.2.vvpp")];
-        assert!(select_voicevox_asset(&assets, "windows-cpu-x64").is_none());
+        assert!(select_voicevox_asset(&assets, "macos-cpu").is_none());
+    }
+
+    #[test]
+    fn test_select_voicevox_asset_windows() {
+        let assets = vec![
+            asset("voicevox_engine-windows-cpu-0.25.2.vvpp"),
+            asset("voicevox_engine-windows-nvidia-0.25.2.vvpp.txt"),
+        ];
+        let found = select_voicevox_asset(&assets, "windows-cpu").unwrap();
+        assert_eq!(found.name, "voicevox_engine-windows-cpu-0.25.2.vvpp");
     }
 
     #[test]

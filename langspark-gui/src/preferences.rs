@@ -245,11 +245,14 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
         ));
 
         // VOICEVOX Engine (Japanese TTS) — a native (Docker-free) build only
-        // exists for Linux x86_64/aarch64; `install_voicevox_engine` reports
-        // a clear error on other platforms, pointing at
+        // exists for Linux x86_64/aarch64 and Windows x86_64 (see
+        // installer::voicevox_platform); `install_voicevox_engine` reports a
+        // clear error on other platforms, pointing at
         // scripts/setup-voicevox.sh's Docker path instead.
         let voicevox_dir = crate::config::AppDirs::new().map(|d| d.voicevox_engine_dir());
-        let already_installed = voicevox_dir.as_ref().is_some_and(|d| d.join("run").exists());
+        let already_installed = voicevox_dir
+            .as_ref()
+            .is_some_and(|d| d.join(langspark_core::voicevox_run_executable_name()).exists());
         install_group.add(&build_install_row(
             "VOICEVOX Engine (Japanese TTS)",
             already_installed,
@@ -334,9 +337,10 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
     let voice_group = adw::PreferencesGroup::builder().title("Speech").build();
     voice_group.add(&build_data_source_row(
         "VOICEVOX Engine (Japanese TTS)",
-        "Installable above on Linux x86_64/aarch64 (Study \u{2192} Language Installation); other platforms \
-         need Docker instead (see scripts/setup-voicevox.sh). Free for commercial and non-commercial use, \
-         but requires crediting \u{201c}VOICEVOX:\u{305a}\u{3093}\u{3060}\u{3082}\u{3093}\u{201d} (the default \
+        "Installable above on Linux x86_64/aarch64 or Windows x86_64 (Study \u{2192} Language \
+         Installation); macOS and other architectures need Docker instead (see \
+         scripts/setup-voicevox.sh). Free for commercial and non-commercial use, but requires \
+         crediting \u{201c}VOICEVOX:\u{305a}\u{3093}\u{3060}\u{3082}\u{3093}\u{201d} (the default \
          Zundamon voice) wherever synthesized audio is used.",
         "Hiroshiba Kazuyuki / VOICEVOX project",
         "Free, with required credit — see terms",

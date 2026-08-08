@@ -47,7 +47,7 @@ Japanese only, for now.
 - GTK4 (4.10+) and libadwaita (1.4+) development libraries
 - An audio backend (ALSA/PulseAudio on Linux, CPAL's default host elsewhere)
 - libtorch, for speech recognition — a *default* Cargo feature (see "Speech recognition" above), so needed to build at all unless you pass `--no-default-features`
-- To use pronunciation practice: a running [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) for Japanese TTS — installable from within the app (Preferences → Study → Language Installation) on Linux x86_64/aarch64, no Docker needed; other platforms need Docker (`./scripts/setup-voicevox.sh`)
+- To use pronunciation practice: a running [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) for Japanese TTS — installable from within the app (Preferences → Study → Language Installation) on Linux x86_64/aarch64 or Windows x86_64, no Docker needed; macOS and other architectures need Docker (`./scripts/setup-voicevox.sh`)
 
 `./scripts/install.sh` sets up everything above (except Rust/Cargo itself) automatically — see "Building a release binary" below. The rest of this section covers a manual dev-workflow setup instead.
 
