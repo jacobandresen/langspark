@@ -108,16 +108,20 @@ pub fn build_main_window(
     let review_page = view_stack.add_titled(&review_session.root, Some("review"), "Review");
     review_page.set_icon_name(Some("view-refresh-symbolic"));
 
-    let practice_words: Vec<pronunciation::PracticeWord> = tab_data
-        .vocabulary
-        .iter()
-        .map(|entry| pronunciation::PracticeWord { text: entry.word.clone(), reading: entry.reading.clone() })
-        .collect();
-    let pronunciation_tab =
-        pronunciation::PronunciationTab::new(practice_words, pronunciation_callbacks(active_language, &settings.borrow()));
-    let pronunciation_page =
-        view_stack.add_titled(&pronunciation_tab.widget, Some("pronunciation"), "Pronunciation");
-    pronunciation_page.set_icon_name(Some("audio-input-microphone-symbolic"));
+    if asr_model_installed(active_language) {
+        let practice_words: Vec<pronunciation::PracticeWord> = tab_data
+            .vocabulary
+            .iter()
+            .map(|entry| pronunciation::PracticeWord { text: entry.word.clone(), reading: entry.reading.clone() })
+            .collect();
+        let pronunciation_tab = pronunciation::PronunciationTab::new(
+            practice_words,
+            pronunciation_callbacks(active_language, &settings.borrow()),
+        );
+        let pronunciation_page =
+            view_stack.add_titled(&pronunciation_tab.widget, Some("pronunciation"), "Pronunciation");
+        pronunciation_page.set_icon_name(Some("audio-input-microphone-symbolic"));
+    }
 
     // Header: view switcher as the title, language indicator, app menu
     let switcher_title = ViewSwitcherTitle::builder().stack(&view_stack).title("LangSpark").build();
@@ -334,8 +338,10 @@ the back, then rate how well you remembered it (Again/Hard/Good/Easy). Your \
 rating adjusts when the card comes up next.
 
 Pronunciation — Pick a word, click Play to hear a reference pronunciation, \
-then Record to attempt it yourself. You'll get a score and feedback. \
-Requires a TTS backend configured in Preferences.
+then Record to attempt it yourself. You'll get a score and feedback. Only \
+appears once a speech recognition model is installed (see README.md); also \
+requires a TTS backend configured in Preferences to hear the reference \
+pronunciation.
 
 Preferences — Change the active language (takes effect on restart), TTS \
 voices, SRS algorithm, and audio devices.";
@@ -353,6 +359,20 @@ fn unavailable_pronunciation_callbacks(
         score: Box::new(move |r, e| langspark_core::score_pronunciation(r, e, code)),
         transcribe: build_transcribe(active_language),
     }
+}
+
+/// Whether a speech recognition model directory exists at
+/// `AppDirs::asr_model_dir` for `active_language` — gates whether the
+/// Pronunciation tab is shown at all, since without a model, Record would
+/// only ever produce `build_transcribe`'s "no speech recognition model
+/// installed" error. Doesn't check the directory's contents (`config.json`,
+/// `model.safetensors`, `tokenizer.json`) or whether langspark-core was
+/// built with the `asr` Cargo feature — either of those still surfaces as a
+/// runtime error from `build_transcribe` if the model is otherwise incomplete.
+fn asr_model_installed(active_language: Language) -> bool {
+    crate::config::AppDirs::new()
+        .map(|d| d.asr_model_dir(active_language.code()))
+        .is_some_and(|dir| dir.exists())
 }
 
 /// Build the `transcribe` callback: runs `SpeechRecognizer` (see `asr.rs`)
@@ -412,6 +432,39 @@ fn build_record(device_name: Option<String>) -> Box<dyn Fn() -> anyhow::Result<(
         std::thread::sleep(RECORDING_DURATION);
         Ok(recorder.stop())
     })
+}
+
+/// If a native VOICEVOX Engine is installed (see
+/// `langspark_core::install_voicevox_engine`, wired to Preferences' "Install"
+/// button in the Data Sources page) and nothing is already listening on its
+/// port — a Docker-based engine (`scripts/setup-voicevox.sh`) or a manual
+/// launch, say — start it as a detached background process, so Japanese TTS
+/// works without the user manually starting anything each session.
+/// Best-effort: failures are only logged, not surfaced to the user, since
+/// VOICEVOX is optional and its absence is already reported through
+/// `build_synthesize`'s normal "couldn't reach VOICEVOX Engine" error path.
+pub fn spawn_voicevox_engine_if_installed(dirs: Option<&crate::config::AppDirs>) {
+    let Some(dirs) = dirs else { return };
+    let run_path = dirs.voicevox_engine_dir().join("run");
+    if !run_path.exists() {
+        return;
+    }
+
+    let addr: std::net::SocketAddr = "127.0.0.1:50021".parse().expect("valid socket address literal");
+    if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(300)).is_ok() {
+        return; // something (this engine from a previous launch, Docker, ...) is already listening
+    }
+
+    match std::process::Command::new(&run_path)
+        .args(["--host", "127.0.0.1", "--port", "50021"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(_) => log::info!("started VOICEVOX Engine from {}", run_path.display()),
+        Err(e) => log::warn!("failed to start VOICEVOX Engine at {}: {e}", run_path.display()),
+    }
 }
 
 /// Resolve a VOICEVOX speaker ID from the free-text `tts_voice_ja` setting: a

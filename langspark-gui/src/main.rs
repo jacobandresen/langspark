@@ -71,6 +71,7 @@ fn main() -> glib::ExitCode {
                 diagnostics::show_error_toast(&toast_overlay, &issue.message);
             }
         }
+        app::spawn_voicevox_engine_if_installed(dirs.as_ref());
 
         window.present();
     });

@@ -47,6 +47,9 @@ tar = "0.4"
 # (pure-Rust decoder only, no system libbz2 dependency).
 bzip2-rs = "0.1"
 
+# VOICEVOX Engine installer: unpacks the .vvpp (a plain zip) release asset.
+zip = { version = "8", default-features = false, features = ["deflate"] }
+
 # ASR - requires a libtorch install (LIBTORCH env var or system-wide /usr/lib/libtorch.so).
 # Enabled by default; `scripts/setup-asr.sh` (run automatically by `scripts/install.sh`)
 # installs a version-pinned libtorch so this builds out of the box. Build with

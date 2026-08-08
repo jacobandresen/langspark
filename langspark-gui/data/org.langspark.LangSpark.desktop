@@ -6,5 +6,5 @@ Exec=langspark-gui
 Icon=org.langspark.LangSpark
 Terminal=false
 Categories=Education;Languages;
-Keywords=vocabulary;flashcards;spaced repetition;pronunciation;japanese;spanish;
+Keywords=vocabulary;flashcards;spaced repetition;pronunciation;japanese;kanji;
 StartupNotify=true

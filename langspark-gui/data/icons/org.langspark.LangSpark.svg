@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LangSpark app icon. A speech bubble (pronunciation practice) containing a
+  two-tone waveform whose colors match the in-app reference/user recording
+  trace colors (WaveformColor::REFERENCE / ::USER in widgets/waveform.rs),
+  so the icon and the pronunciation tab's own waveform visually agree.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4B3A9E" />
+      <stop offset="1" stop-color="#2E2266" />
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)" />
+
+  <!-- Speech bubble -->
+  <path
+    d="M 30 34
+       h 68
+       a 10 10 0 0 1 10 10
+       v 34
+       a 10 10 0 0 1 -10 10
+       h -40
+       l -16 16
+       v -16
+       h -12
+       a 10 10 0 0 1 -10 -10
+       v -34
+       a 10 10 0 0 1 10 -10
+       z"
+    fill="#F5F3FF"
+  />
+
+  <!-- Waveform bars: reference (blue) then user (orange), echoing the
+       pronunciation tab's side-by-side comparison. -->
+  <g>
+    <rect x="42" y="58" width="7" height="14" rx="3.5" fill="#3380E6" />
+    <rect x="53" y="50" width="7" height="30" rx="3.5" fill="#3380E6" />
+    <rect x="64" y="56" width="7" height="18" rx="3.5" fill="#3380E6" />
+    <rect x="75" y="46" width="7" height="38" rx="3.5" fill="#E66633" />
+    <rect x="86" y="54" width="7" height="22" rx="3.5" fill="#E66633" />
+  </g>
+</svg>

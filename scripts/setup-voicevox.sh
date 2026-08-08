@@ -4,6 +4,11 @@
 # default). Requires Docker with a running daemon; this script does not
 # install Docker itself since that's platform-specific.
 #
+# On Linux x86_64/aarch64, LangSpark can install a native build instead (no
+# Docker) from Preferences -> Study -> Language Installation, or via
+# `langspark_core::install_voicevox_engine` — prefer that unless you're on
+# another platform/architecture or specifically want the engine in Docker.
+#
 # Idempotent: safe to re-run. Starts a stopped container, or reports that it's
 # already running.
 #

@@ -7,6 +7,12 @@
 # and generates the tokenizer.json the model repo doesn't ship (needs a throwaway
 # Python venv with `transformers`, removed afterward).
 #
+# libtorch is only needed to *build* langspark-gui with the `asr` feature —
+# once you have a binary with that feature compiled in, re-fetching just the
+# model (steps 2-3 below) is available from Preferences -> Study -> Language
+# Installation instead of re-running this whole script (see
+# `langspark_core::install_asr_model`).
+#
 # Idempotent: safe to re-run — skips any step whose output already exists.
 #
 # Usage: ./scripts/setup-asr.sh

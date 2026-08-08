@@ -87,8 +87,11 @@ fn extract_json_member(tgz_bytes: &[u8], dest: &Path) -> Result<()> {
     bail!("downloaded archive did not contain a .json file")
 }
 
-/// Download `url` fully into memory, reporting progress via `on_progress`.
-fn download_bytes(url: &str, on_progress: &ProgressFn) -> Result<Vec<u8>> {
+/// Download `url`, writing it to `out` as it arrives and reporting progress
+/// via `on_progress`. Shared by `download_bytes` (buffers in memory — fine
+/// for anything up to a few hundred MB) and `install_voicevox_engine`
+/// (streams to disk instead, since that asset is ~2GB).
+fn download_to(url: &str, out: &mut impl Write, on_progress: &ProgressFn) -> Result<()> {
     let response = ureq::get(url)
         .set("User-Agent", "langspark-dictionary-installer")
         .call()
@@ -96,7 +99,6 @@ fn download_bytes(url: &str, on_progress: &ProgressFn) -> Result<Vec<u8>> {
 
     let total: u64 = response.header("Content-Length").and_then(|s| s.parse().ok()).unwrap_or(0);
 
-    let mut bytes = Vec::new();
     let mut reader = response.into_reader();
     let mut buf = [0u8; 64 * 1024];
     let mut downloaded = 0u64;
@@ -105,11 +107,18 @@ fn download_bytes(url: &str, on_progress: &ProgressFn) -> Result<Vec<u8>> {
         if n == 0 {
             break;
         }
-        bytes.extend_from_slice(&buf[..n]);
+        out.write_all(&buf[..n]).context("failed to write downloaded data")?;
         downloaded += n as u64;
         on_progress(downloaded, total);
     }
 
+    Ok(())
+}
+
+/// Download `url` fully into memory, reporting progress via `on_progress`.
+fn download_bytes(url: &str, on_progress: &ProgressFn) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    download_to(url, &mut bytes, on_progress)?;
     Ok(bytes)
 }
 
@@ -224,6 +233,199 @@ pub fn install_tatoeba_examples(dest: &Path, on_progress: &ProgressFn) -> Result
     Ok(count)
 }
 
+// ---------------------------------------------------------------------
+// VOICEVOX Engine (Japanese TTS) — native install, no Docker required
+// ---------------------------------------------------------------------
+
+const VOICEVOX_RELEASES_API: &str = "https://api.github.com/repos/VOICEVOX/voicevox_engine/releases/latest";
+
+/// The VOICEVOX Engine release asset name segment identifying this CPU
+/// platform (e.g. `"linux-cpu-x64"`) — `None` if VOICEVOX doesn't publish a
+/// prebuilt CPU engine for it. Only Linux x86_64/aarch64 are handled: those
+/// are the platforms this project's own install scripts (`scripts/
+/// install.sh`) support running LangSpark on at all. Other platforms (or
+/// GPU builds) fall back to `scripts/setup-voicevox.sh`'s Docker path.
+fn voicevox_platform() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Some("linux-cpu-x64"),
+        ("linux", "aarch64") => Some("linux-cpu-arm64"),
+        _ => None,
+    }
+}
+
+/// Pick the release asset that's the whole-engine `.vvpp` (a plain zip) for
+/// `platform` — as opposed to the equivalent split `.7z.NNN` archive (needs
+/// an external `7z` tool to reassemble/extract) or a `.txt` sidecar file.
+fn select_voicevox_asset<'a>(assets: &'a [GithubAsset], platform: &str) -> Option<&'a GithubAsset> {
+    let prefix = format!("voicevox_engine-{platform}-");
+    assets.iter().find(|a| a.name.starts_with(&prefix) && a.name.ends_with(".vvpp"))
+}
+
+/// Download and install a native VOICEVOX Engine build (see
+/// `voicevox_platform` for which platforms) to `dest_dir` — no Docker
+/// needed, unlike `scripts/setup-voicevox.sh`. The `.vvpp` release asset is
+/// a plain zip of the engine's install directory (a `run` executable,
+/// bundled ONNX runtime, and ~1.5GB of voice model weights — the download is
+/// large, around 2GB); extracted as-is, then `run` is marked executable.
+/// `langspark-gui` starts `<dest_dir>/run --host 127.0.0.1 --port 50021` to
+/// actually run it — this only installs the files. Returns the installed
+/// release version.
+pub fn install_voicevox_engine(dest_dir: &Path, on_progress: &ProgressFn) -> Result<String> {
+    let platform = voicevox_platform().context(
+        "no native VOICEVOX Engine build for this OS/CPU architecture — see \
+         scripts/setup-voicevox.sh for the Docker-based alternative",
+    )?;
+
+    let release: GithubRelease = ureq::get(VOICEVOX_RELEASES_API)
+        .set("User-Agent", "langspark-voicevox-installer")
+        .call()
+        .context("failed to query VOICEVOX Engine releases")?
+        .into_json()
+        .context("failed to parse GitHub releases response")?;
+
+    let asset = select_voicevox_asset(&release.assets, platform)
+        .with_context(|| format!("no VOICEVOX Engine .vvpp release asset found for '{platform}'"))?;
+
+    std::fs::create_dir_all(dest_dir).context("failed to create VOICEVOX Engine directory")?;
+    let tmp_zip = dest_dir.join(".download.vvpp.part");
+    {
+        let mut file = std::fs::File::create(&tmp_zip)
+            .with_context(|| format!("failed to create {}", tmp_zip.display()))?;
+        download_to(&asset.browser_download_url, &mut file, on_progress)?;
+    }
+
+    let file = std::fs::File::open(&tmp_zip).context("failed to reopen downloaded archive")?;
+    let mut archive =
+        zip::ZipArchive::new(std::io::BufReader::new(file)).context("failed to read VOICEVOX Engine archive")?;
+    archive.extract(dest_dir).context("failed to extract VOICEVOX Engine archive")?;
+    let _ = std::fs::remove_file(&tmp_zip);
+
+    #[cfg(unix)]
+    mark_executable(&dest_dir.join("run")).context("failed to make the VOICEVOX Engine's 'run' executable")?;
+
+    Ok(release.tag_name)
+}
+
+/// Set the executable bit on `path` (in addition to whatever read/write bits
+/// it already has), since `zip::ZipArchive::extract` doesn't reliably
+/// preserve Unix permissions from the archive across all `zip` versions.
+#[cfg(unix)]
+fn mark_executable(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(path)?.permissions();
+    perms.set_mode(perms.mode() | 0o111);
+    std::fs::set_permissions(path, perms)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Qwen3-ASR model (speech recognition) — weights via plain HTTP,
+// tokenizer.json via a throwaway Python venv (see `generate_tokenizer_json`)
+// ---------------------------------------------------------------------
+
+/// Files fetched directly from the model's Hugging Face repo — everything
+/// except `tokenizer.json`, which that repo doesn't ship.
+const ASR_MODEL_FILES: &[&str] = &[
+    "config.json",
+    "model.safetensors",
+    "vocab.json",
+    "merges.txt",
+    "tokenizer_config.json",
+    "generation_config.json",
+    "preprocessor_config.json",
+    "chat_template.json",
+];
+
+/// Download a Qwen3 ASR model from Hugging Face (`model`, e.g.
+/// `"Qwen3-ASR-0.6B"` — the larger `Qwen3-ASR-1.7B` ships its weights
+/// sharded across multiple `model-NNNNN-of-NNNNN.safetensors` files rather
+/// than one `model.safetensors`, which this doesn't handle; use
+/// `scripts/setup-asr.sh` for that one instead) into `dest_dir`, plus a
+/// generated `tokenizer.json`. Mirrors `scripts/setup-asr.sh`, just driven
+/// from the app itself — including needing `python3` on `PATH` for that last
+/// step (see `generate_tokenizer_json`). Doesn't touch libtorch: that's a
+/// *build-time* dependency of the already-running binary, not a runtime one,
+/// so there's nothing for this to install there. Idempotent: skips any file
+/// that already exists, like the shell script.
+pub fn install_asr_model(model: &str, dest_dir: &Path, on_progress: &ProgressFn) -> Result<String> {
+    std::fs::create_dir_all(dest_dir).context("failed to create ASR model directory")?;
+    let base_url = format!("https://huggingface.co/Qwen/{model}/resolve/main");
+
+    for file in ASR_MODEL_FILES {
+        let dest = dest_dir.join(file);
+        if dest.exists() {
+            continue;
+        }
+        let mut out =
+            std::fs::File::create(&dest).with_context(|| format!("failed to create {}", dest.display()))?;
+        download_to(&format!("{base_url}/{file}"), &mut out, on_progress)
+            .with_context(|| format!("failed to download {file}"))?;
+    }
+
+    if !dest_dir.join("tokenizer.json").exists() {
+        generate_tokenizer_json(dest_dir)?;
+    }
+
+    Ok(format!("Installed {model}"))
+}
+
+/// Generate `<model_dir>/tokenizer.json` from the plain files a Hugging Face
+/// repo ships (`vocab.json`, `merges.txt`, `tokenizer_config.json`, ...).
+/// Reimplementing this in Rust would mean re-deriving the exact fast-
+/// tokenizer construction `transformers.AutoTokenizer` does from those files
+/// (special tokens, added tokens, normalizer/pre-tokenizer config) — that
+/// risks silently producing a subtly *different* tokenizer (garbled
+/// transcriptions at runtime) rather than a loud failure, so instead this
+/// shells out to the same real implementation `scripts/setup-asr.sh` uses,
+/// in a throwaway venv removed afterward either way.
+fn generate_tokenizer_json(model_dir: &Path) -> Result<()> {
+    if std::process::Command::new("python3").arg("--version").output().is_err() {
+        bail!(
+            "python3 is required to generate tokenizer.json (via a throwaway venv with \
+             'transformers') but wasn't found on PATH"
+        );
+    }
+
+    let venv_dir = std::env::temp_dir().join(format!("langspark-asr-tokenizer-venv-{}", std::process::id()));
+    let result = generate_tokenizer_json_with_venv(model_dir, &venv_dir);
+    let _ = std::fs::remove_dir_all(&venv_dir);
+    result
+}
+
+fn generate_tokenizer_json_with_venv(model_dir: &Path, venv_dir: &Path) -> Result<()> {
+    run_checked(std::process::Command::new("python3").args(["-m", "venv"]).arg(venv_dir))
+        .context("failed to create a Python venv")?;
+
+    let pip = venv_dir.join("bin/pip");
+    run_checked(std::process::Command::new(&pip).args(["install", "--upgrade", "pip", "-q"]))
+        .context("failed to upgrade pip in the venv")?;
+    run_checked(std::process::Command::new(&pip).args(["install", "transformers", "-q"]))
+        .context("failed to install the 'transformers' package in the venv")?;
+
+    let tokenizer_path = model_dir.join("tokenizer.json");
+    let script = format!(
+        "from transformers import AutoTokenizer\n\
+         tok = AutoTokenizer.from_pretrained('{}', trust_remote_code=True)\n\
+         tok.backend_tokenizer.save('{}')\n",
+        model_dir.display(),
+        tokenizer_path.display(),
+    );
+    run_checked(std::process::Command::new(venv_dir.join("bin/python")).args(["-c", &script]))
+        .context("failed to generate tokenizer.json")?;
+
+    Ok(())
+}
+
+/// Run `cmd`, mapping a nonzero exit status to an `Err` (`Command::status`
+/// alone only reports spawn failures, not the command's own failure).
+fn run_checked(cmd: &mut std::process::Command) -> Result<()> {
+    let status = cmd.status().context("failed to spawn command")?;
+    if !status.success() {
+        bail!("command exited with {status}");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,6 +433,25 @@ mod tests {
 
     fn asset(name: &str) -> GithubAsset {
         GithubAsset { name: name.to_string(), browser_download_url: format!("https://example.com/{name}") }
+    }
+
+    #[test]
+    fn test_select_voicevox_asset_picks_vvpp_not_split_7z() {
+        let assets = vec![
+            asset("voicevox_engine-linux-cpu-x64-0.25.2.7z.001"),
+            asset("voicevox_engine-linux-cpu-x64-0.25.2.7z.txt"),
+            asset("voicevox_engine-linux-cpu-x64-0.25.2.vvpp"),
+            asset("voicevox_engine-linux-cpu-x64-0.25.2.vvpp.txt"),
+            asset("voicevox_engine-linux-cpu-arm64-0.25.2.vvpp"),
+        ];
+        let found = select_voicevox_asset(&assets, "linux-cpu-x64").unwrap();
+        assert_eq!(found.name, "voicevox_engine-linux-cpu-x64-0.25.2.vvpp");
+    }
+
+    #[test]
+    fn test_select_voicevox_asset_no_match_for_unbuilt_platform() {
+        let assets = vec![asset("voicevox_engine-linux-cpu-x64-0.25.2.vvpp")];
+        assert!(select_voicevox_asset(&assets, "windows-cpu-x64").is_none());
     }
 
     #[test]

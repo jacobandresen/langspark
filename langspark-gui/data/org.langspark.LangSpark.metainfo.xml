@@ -7,11 +7,13 @@
   <summary>Offline-first vocabulary and pronunciation practice</summary>
   <description>
     <p>
-      LangSpark is a native, offline-first vocabulary application combining
-      spaced repetition (SM-2) with language-aware pronunciation practice.
-      It supports Japanese (with kanji lookup via JMdict/Kanjidic) and
-      Spanish, with an architecture designed to support additional
-      languages one at a time.
+      LangSpark is a native, offline-first Japanese vocabulary application
+      combining spaced repetition (SM-2 or FSRS) with pronunciation
+      practice: play a reference pronunciation via VOICEVOX, record
+      yourself, and get scored against a speech-recognition transcript with
+      a per-character breakdown of what was and wasn't heard. Dictionary
+      data (JMdict, Kanjidic) and supplemental example sentences (Tatoeba)
+      install from within the app.
     </p>
   </description>
   <launchable type="desktop-id">org.langspark.LangSpark.desktop</launchable>

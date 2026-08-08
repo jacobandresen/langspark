@@ -119,6 +119,13 @@ impl AppDirs {
     pub fn asr_model_dir(&self, language_code: &str) -> PathBuf {
         self.dirs.data_dir().join("asr").join(language_code)
     }
+
+    /// Where a native VOICEVOX Engine install (a `run` executable plus its
+    /// bundled model/library files) lives — see
+    /// `langspark_core::install_voicevox_engine`.
+    pub fn voicevox_engine_dir(&self) -> PathBuf {
+        self.dirs.data_dir().join("voicevox_engine")
+    }
 }
 
 #[cfg(test)]

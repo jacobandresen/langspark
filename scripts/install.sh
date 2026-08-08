@@ -28,16 +28,16 @@ PREFIX="${PREFIX:-/usr/local}"
 BIN_DIR="$PREFIX/bin"
 APP_DIR="$PREFIX/share/applications"
 METAINFO_DIR="$PREFIX/share/metainfo"
+ICON_DIR="$PREFIX/share/icons/hicolor/scalable/apps"
 
 # System packages needed to build (and run) langspark-gui with the default
 # feature set. Covers: GTK4 + libadwaita (UI), ALSA (cpal/rodio audio
-# capture+playback), a C toolchain + cmake + pkg-config (espeak-ng is built
-# from source as part of piper-rs's Spanish TTS phonemizer via
-# espeak-rs-sys), and Docker (VOICEVOX Engine, see setup-voicevox.sh).
-# rusqlite is built with the "bundled" feature, so no system SQLite package
-# is needed. libtorch (the ASR feature's native dependency) is handled
-# separately by scripts/setup-asr.sh, below — it's project-local, not a
-# system package.
+# capture+playback), a C toolchain + cmake + pkg-config (needed to build
+# qwen3-asr-rs's native tch/libtorch bindings), and Docker (VOICEVOX Engine,
+# see setup-voicevox.sh). rusqlite is built with the "bundled" feature, so
+# no system SQLite package is needed. libtorch itself (the ASR feature's
+# native dependency) is handled separately by scripts/setup-asr.sh, below —
+# it's project-local, not a system package.
 install_dependencies() {
     if [[ "${SKIP_DEPS:-0}" == "1" ]]; then
         echo "SKIP_DEPS=1 set, not installing system packages."
@@ -123,9 +123,13 @@ echo "Installing to $PREFIX ..."
 install -Dm755 target/release/langspark-gui "$BIN_DIR/langspark-gui"
 install -Dm644 langspark-gui/data/org.langspark.LangSpark.desktop "$APP_DIR/org.langspark.LangSpark.desktop"
 install -Dm644 langspark-gui/data/org.langspark.LangSpark.metainfo.xml "$METAINFO_DIR/org.langspark.LangSpark.metainfo.xml"
+install -Dm644 langspark-gui/data/icons/org.langspark.LangSpark.svg "$ICON_DIR/org.langspark.LangSpark.svg"
 
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$APP_DIR" || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t "$PREFIX/share/icons/hicolor" || true
 fi
 
 if [[ "${SKIP_DICTIONARY:-0}" == "1" ]]; then

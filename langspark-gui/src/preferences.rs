@@ -243,12 +243,132 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
                 Ok(format!("Installed ({count} sentence pairs)"))
             },
         ));
+
+        // VOICEVOX Engine (Japanese TTS) — a native (Docker-free) build only
+        // exists for Linux x86_64/aarch64; `install_voicevox_engine` reports
+        // a clear error on other platforms, pointing at
+        // scripts/setup-voicevox.sh's Docker path instead.
+        let voicevox_dir = crate::config::AppDirs::new().map(|d| d.voicevox_engine_dir());
+        let already_installed = voicevox_dir.as_ref().is_some_and(|d| d.join("run").exists());
+        install_group.add(&build_install_row(
+            "VOICEVOX Engine (Japanese TTS)",
+            already_installed,
+            "Not installed (~2GB download)",
+            move || {
+                let dir = voicevox_dir.clone().context("couldn't determine the VOICEVOX Engine directory")?;
+                let version = langspark_core::install_voicevox_engine(&dir, &|_, _| {})?;
+                Ok(format!("Installed ({version}) — restart LangSpark to start it"))
+            },
+        ));
+
+        // Speech recognition model (see app.rs's `asr_model_installed`,
+        // which gates whether the Pronunciation tab shows at all). Only the
+        // model itself is installed here — libtorch is a *build-time*
+        // dependency of this already-running binary, so there's nothing to
+        // fetch for it at runtime.
+        let asr_dir = crate::config::AppDirs::new().map(|d| d.asr_model_dir(meta.code));
+        let already_installed = asr_dir.as_ref().is_some_and(|d| d.join("tokenizer.json").exists());
+        install_group.add(&build_install_row(
+            "Speech recognition model (Qwen3-ASR)",
+            already_installed,
+            "Not installed (~1.5GB download, needs python3 on PATH)",
+            move || {
+                let dir = asr_dir.clone().context("couldn't determine the ASR model directory")?;
+                let message = langspark_core::install_asr_model("Qwen3-ASR-0.6B", &dir, &|_, _| {})?;
+                Ok(format!("{message} — restart LangSpark for the Pronunciation tab to appear"))
+            },
+        ));
     }
     study_page.add(&install_group);
 
     dialog.add(&study_page);
 
+    // --- Data Sources page: what's downloaded, from where, under what license ---
+    let data_page =
+        adw::PreferencesPage::builder().title("Data Sources").icon_name("dialog-information-symbolic").build();
+
+    let dict_dir = settings
+        .borrow()
+        .dictionary_data_dir
+        .clone()
+        .or_else(|| crate::config::AppDirs::new().map(|d| d.dictionaries_dir()));
+    let location_group = adw::PreferencesGroup::builder()
+        .title("Downloaded To")
+        .description("Installed via Study \u{2192} Language Installation")
+        .build();
+    location_group.add(
+        &adw::ActionRow::builder()
+            .title("Data directory")
+            .subtitle(dict_dir.map(|p| p.display().to_string()).unwrap_or_else(|| "Unknown".to_string()))
+            .build(),
+    );
+    data_page.add(&location_group);
+
+    let dict_sources_group = adw::PreferencesGroup::builder()
+        .title("Dictionary Data")
+        .description("All freely available for reuse, with attribution")
+        .build();
+    dict_sources_group.add(&build_data_source_row(
+        "JMdict",
+        "Japanese-English dictionary entries: words, readings, meanings, parts of speech.",
+        "Electronic Dictionary Research and Development Group (EDRDG), via scriptin/jmdict-simplified",
+        "CC BY-SA 4.0",
+        "https://www.edrdg.org/wiki/index.php/JMdict-EDICT_Dictionary_Project",
+    ));
+    dict_sources_group.add(&build_data_source_row(
+        "Kanjidic",
+        "Kanji readings, meanings, stroke counts, and JLPT/grade levels.",
+        "Electronic Dictionary Research and Development Group (EDRDG), via scriptin/jmdict-simplified",
+        "CC BY-SA 4.0",
+        "https://www.edrdg.org/wiki/index.php/KANJIDIC_Project",
+    ));
+    dict_sources_group.add(&build_data_source_row(
+        "Example sentences",
+        "Japanese/English sentence pairs, used to fill in examples JMdict itself doesn't have for a word.",
+        "The Tatoeba Project (tatoeba.org)",
+        "CC BY 2.0 FR (a minority of sentences are CC0)",
+        "https://tatoeba.org/en/downloads",
+    ));
+    data_page.add(&dict_sources_group);
+
+    let voice_group = adw::PreferencesGroup::builder().title("Speech").build();
+    voice_group.add(&build_data_source_row(
+        "VOICEVOX Engine (Japanese TTS)",
+        "Installable above on Linux x86_64/aarch64 (Study \u{2192} Language Installation); other platforms \
+         need Docker instead (see scripts/setup-voicevox.sh). Free for commercial and non-commercial use, \
+         but requires crediting \u{201c}VOICEVOX:\u{305a}\u{3093}\u{3060}\u{3082}\u{3093}\u{201d} (the default \
+         Zundamon voice) wherever synthesized audio is used.",
+        "Hiroshiba Kazuyuki / VOICEVOX project",
+        "Free, with required credit — see terms",
+        "https://voicevox.hiroshiba.jp/term/",
+    ));
+    voice_group.add(&build_data_source_row(
+        "Speech recognition model (Qwen3-ASR-0.6B, installable above)",
+        "Weights download directly; the tokenizer needs a throwaway Python venv (python3 on \
+         PATH), removed once it's done. Only matters if this build has the optional 'asr' \
+         Cargo feature enabled (the default — see README.md).",
+        "Alibaba Qwen team, via huggingface.co/Qwen",
+        "Apache 2.0",
+        "https://huggingface.co/Qwen/Qwen3-ASR-0.6B",
+    ));
+    data_page.add(&voice_group);
+
+    dialog.add(&data_page);
+
     dialog
+}
+
+/// Build an informational row describing one external data/service source:
+/// what it is, who publishes it, and under what license — with a "Learn
+/// more" link to the authoritative source. Purely informational (no
+/// install button; see `build_install_row` for that).
+fn build_data_source_row(title: &str, description: &str, source: &str, license: &str, url: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(title)
+        .subtitle(format!("{description}\n\nSource: {source}\nLicense: {license}"))
+        .build();
+    row.add_suffix(&gtk4::LinkButton::builder().uri(url).label("Learn more").valign(gtk4::Align::Center).build());
+    row
 }
 
 /// Build an "Install"/"Reinstall" row for a downloadable resource. Clicking
