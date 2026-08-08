@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Jacob Andresen <jacob.andresen@gmail.com>"]
 description = "LangSpark core logic: SRS, dictionaries, audio processing, language management"
-license = "GPL-3.0"
+license = "GPL-3.0-or-later"
 readme = "README.md"
 
 [dependencies]

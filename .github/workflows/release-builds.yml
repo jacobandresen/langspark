@@ -1,0 +1,105 @@
+name: Release builds
+
+# Builds installable packages and attaches them to a GitHub Release:
+#   - windows:   langspark-gui.exe + its GTK4/libadwaita DLLs, zipped
+#   - linux-deb: a .deb for Debian/Ubuntu (via cargo-deb)
+#
+# Both build with --no-default-features, i.e. without the `asr` speech
+# recognition feature: that needs libtorch, which is fragile to wire up
+# reliably in CI (large downloads, DLL/rpath issues) compared to the rest of
+# the build. A build without ASR still runs everything except the
+# Pronunciation tab (which only appears once a speech recognition model is
+# installed — see app.rs::asr_model_installed); VOICEVOX playback,
+# vocabulary, review, and the SRS engine are unaffected. See README.md's
+# "Speech recognition" section, or scripts/install.sh, for a from-source
+# build that includes it.
+#
+# Runs only when a GitHub Release is published — not on every push/PR, to
+# keep this off the critical path (and the Actions minutes bill) for normal
+# development. Add `push`/`pull_request`/`workflow_dispatch` triggers below
+# if you also want on-demand or every-commit builds.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write # needed to attach build artifacts to the release below
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      # MSYS2's own Rust toolchain (rather than rustup) so pkg-config picks
+      # up MSYS2-installed GTK4/libadwaita automatically — the toolchain
+      # triple (gnu) has to match the libraries' toolchain, which rustup's
+      # default Windows install (msvc) doesn't.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-ntldd
+            mingw-w64-ucrt-x86_64-sqlite3
+
+      - name: Build
+        run: cargo build --release -p langspark-gui --no-default-features
+
+      # GTK apps on Windows need their DLLs alongside the .exe (no
+      # system-wide GTK the way Linux distros have) — ntldd walks the full
+      # dependency tree, not just direct links, and we only pull in the ones
+      # MSYS2 actually installed (ucrt64\bin), not Windows system DLLs.
+      - name: Collect runtime DLLs
+        run: |
+          mkdir -p dist
+          cp target/release/langspark-gui.exe dist/
+          cp -r langspark-gui/data dist/
+          ntldd -R target/release/langspark-gui.exe \
+            | grep -i '/ucrt64/bin/' \
+            | awk '{print $3}' \
+            | sort -u \
+            | xargs -I{} cp -u {} dist/
+
+      - name: Zip
+        run: cd dist && 7z a -r ../LangSpark-windows-x64.zip .
+
+      - name: Attach to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" LangSpark-windows-x64.zip --clobber
+
+  linux-deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same package list as scripts/install.sh's install_dependencies(),
+      # minus Docker (not needed to build).
+      - name: Install system build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config cmake libgtk-4-dev libadwaita-1-dev libasound2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Build .deb
+        run: cargo deb -p langspark-gui -- --no-default-features
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" target/debian/*.deb --clobber

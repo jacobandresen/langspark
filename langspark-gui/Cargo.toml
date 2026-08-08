@@ -3,8 +3,8 @@ name = "langspark-gui"
 version = "0.1.0"
 edition = "2021"
 authors = ["Jacob Andresen <jacob.andresen@gmail.com>"]
-description = "LangSpark GTK4 UI: vocabulary browser, review queue, pronunciation practice"
-license = "GPL-3.0"
+description = "Offline-first vocabulary and pronunciation practice"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 # GTK4 and libadwaita
@@ -45,3 +45,34 @@ default = ["asr"]
 # `--no-default-features` if libtorch isn't available; `SpeechRecognizer`
 # degrades gracefully to a clear "unavailable" error without it (see asr.rs).
 asr = ["langspark-core/asr"]
+
+# `cargo deb -p langspark-gui` (see .github/workflows/release-builds.yml) —
+# installs the same binary + .desktop entry + AppStream metadata + icon
+# layout as scripts/install.sh, as a .deb instead. `depends = "$auto"` has
+# cargo-deb run ldd/dpkg-shlibdeps over the built binary to fill in the
+# actual runtime library dependencies (GTK4, libadwaita, ALSA, ...) rather
+# than us hand-maintaining version constraints here.
+[package.metadata.deb]
+# Debian package names must be lowercase (policy 5.6.7), so this can't be
+# exactly "LangSpark" — but it should still be the app's name ("langspark"),
+# not this crate's own internal "langspark-gui" (an implementation detail:
+# the core/GUI crate split, not something users should see in `apt install`
+# or the .deb filename).
+name = "langspark"
+maintainer = "Jacob Andresen <jacob.andresen@gmail.com>"
+copyright = "2026, Jacob Andresen <jacob.andresen@gmail.com>"
+license-file = ["../LICENSE", "0"]
+extended-description = """\
+Offline-first Japanese vocabulary application combining spaced repetition \
+(SM-2/FSRS) with pronunciation practice: play a reference pronunciation via \
+VOICEVOX, record yourself, and get scored against a speech-recognition \
+transcript with a per-character breakdown of what was and wasn't heard."""
+section = "education"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/langspark-gui", "usr/bin/", "755"],
+    ["data/org.langspark.LangSpark.desktop", "usr/share/applications/", "644"],
+    ["data/org.langspark.LangSpark.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["data/icons/org.langspark.LangSpark.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+]
