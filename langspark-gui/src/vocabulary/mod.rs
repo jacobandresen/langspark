@@ -33,17 +33,15 @@ struct CardCallbacks {
 /// A single vocabulary entry rendered as a clickable card. Clicking it opens
 /// the detail dialog (`dialog::build`), wired to `callbacks`.
 fn build_card(entry: &VocabularyEntry, callbacks: &CardCallbacks) -> gtk4::Button {
-    let content = Box::new(Orientation::Vertical, 4);
-    content.set_margin_top(8);
-    content.set_margin_bottom(8);
-    content.set_margin_start(12);
-    content.set_margin_end(12);
+    let content = Box::new(Orientation::Vertical, 3);
+    content.set_size_request(148, -1);
 
     let word = Label::builder().label(&entry.word).css_classes(["title-4"]).xalign(0.0).build();
     content.append(&word);
 
     if let Some(reading) = &entry.reading {
-        let reading_label = Label::builder().label(reading).css_classes(["caption"]).xalign(0.0).build();
+        let reading_label =
+            Label::builder().label(reading).css_classes(["caption", "dim-label"]).xalign(0.0).build();
         content.append(&reading_label);
     }
 
@@ -51,7 +49,10 @@ fn build_card(entry: &VocabularyEntry, callbacks: &CardCallbacks) -> gtk4::Butto
         .label(&entry.meaning)
         .xalign(0.0)
         .wrap(true)
-        .max_width_chars(24)
+        .lines(2)
+        .ellipsize(gtk4::pango::EllipsizeMode::End)
+        .max_width_chars(20)
+        .margin_top(2)
         .build();
     content.append(&meaning);
 
@@ -84,11 +85,12 @@ fn build_card(entry: &VocabularyEntry, callbacks: &CardCallbacks) -> gtk4::Butto
 }
 
 /// A labeled section (e.g. "N4") showing a horizontal strip of its entries
-/// with a "Show All" toggle that reveals the rest in a wrapping grid.
+/// with a +/- toggle that expands to reveal the rest in a wrapping grid.
 fn build_section(level: &str, entries: &[&VocabularyEntry], callbacks: &CardCallbacks) -> gtk4::Box {
-    let section = Box::new(Orientation::Vertical, 4);
+    let section = Box::new(Orientation::Vertical, 6);
 
     let header = Box::new(Orientation::Horizontal, 8);
+    header.set_valign(gtk4::Align::Center);
     let title = Label::builder()
         .label(level)
         .css_classes(["langspark-section-header"])
@@ -97,13 +99,17 @@ fn build_section(level: &str, entries: &[&VocabularyEntry], callbacks: &CardCall
         .build();
     header.append(&title);
 
-    let show_all = gtk4::ToggleButton::builder().label("Show All").build();
+    let show_all = gtk4::ToggleButton::builder()
+        .label("+")
+        .css_classes(["circular", "flat", "langspark-expand-toggle"])
+        .tooltip_text("Expand")
+        .build();
     header.append(&show_all);
     section.append(&header);
 
     // Horizontal strip: first few entries in a row, always visible.
-    let strip = Box::new(Orientation::Horizontal, 8);
-    strip.set_margin_top(4);
+    let strip = Box::new(Orientation::Horizontal, 10);
+    strip.set_margin_top(2);
     for entry in entries.iter().take(6) {
         strip.append(&build_card(entry, callbacks));
     }
@@ -114,8 +120,13 @@ fn build_section(level: &str, entries: &[&VocabularyEntry], callbacks: &CardCall
         .build();
     section.append(&strip_scroller);
 
-    // Full grid, revealed by "Show All".
-    let grid = FlowBox::builder().selection_mode(gtk4::SelectionMode::None).max_children_per_line(6).build();
+    // Full grid, revealed by the +/- toggle.
+    let grid = FlowBox::builder()
+        .selection_mode(gtk4::SelectionMode::None)
+        .max_children_per_line(6)
+        .row_spacing(10)
+        .column_spacing(10)
+        .build();
     for entry in entries {
         grid.insert(&build_card(entry, callbacks), -1);
     }
@@ -131,8 +142,11 @@ fn build_section(level: &str, entries: &[&VocabularyEntry], callbacks: &CardCall
         #[weak]
         strip_scroller,
         move |btn| {
-            revealer.set_reveal_child(btn.is_active());
-            strip_scroller.set_visible(!btn.is_active());
+            let expanded = btn.is_active();
+            btn.set_label(if expanded { "\u{2212}" } else { "+" });
+            btn.set_tooltip_text(Some(if expanded { "Collapse" } else { "Expand" }));
+            revealer.set_reveal_child(expanded);
+            strip_scroller.set_visible(!expanded);
         }
     ));
 
@@ -209,11 +223,7 @@ pub fn build_tab(entries: &[VocabularyEntry], callbacks: VocabTabCallbacks) -> g
                 return;
             }
 
-            let mut by_level: BTreeMap<String, Vec<&VocabularyEntry>> = BTreeMap::new();
-            for entry in filtered {
-                let level = entry.level.clone().unwrap_or_else(|| "Uncategorized".to_string());
-                by_level.entry(level).or_default().push(entry);
-            }
+            let by_level = group_by_level(&filtered);
             let card_callbacks = card_callbacks.borrow();
             let card_callbacks = card_callbacks.as_ref().expect("card_callbacks set before first render");
             for (level, level_entries) in &by_level {
@@ -302,9 +312,9 @@ fn filter_entries<'a>(entries: &'a [VocabularyEntry], query: &str) -> Vec<&'a Vo
 /// Group entries by proficiency level (falling back to "Uncategorized"),
 /// pulled out of `build_tab` so the grouping logic is testable without a
 /// GTK display connection.
-fn group_by_level(entries: &[VocabularyEntry]) -> BTreeMap<String, Vec<&VocabularyEntry>> {
+fn group_by_level<'a>(entries: &[&'a VocabularyEntry]) -> BTreeMap<String, Vec<&'a VocabularyEntry>> {
     let mut by_level: BTreeMap<String, Vec<&VocabularyEntry>> = BTreeMap::new();
-    for entry in entries {
+    for &entry in entries {
         let level = entry.level.clone().unwrap_or_else(|| "Uncategorized".to_string());
         by_level.entry(level).or_default().push(entry);
     }
@@ -343,7 +353,8 @@ mod tests {
     #[test]
     fn test_group_by_level() {
         let entries = vec![sample_entry("受け取る", "N4"), sample_entry("食べる", "N5")];
-        let grouped = group_by_level(&entries);
+        let refs: Vec<&VocabularyEntry> = entries.iter().collect();
+        let grouped = group_by_level(&refs);
         assert_eq!(grouped.len(), 2);
         assert_eq!(grouped["N4"][0].word, "受け取る");
     }
@@ -353,7 +364,8 @@ mod tests {
         let mut entry = sample_entry("hola", "B1");
         entry.level = None;
         let entries = [entry];
-        let grouped = group_by_level(&entries);
+        let refs: Vec<&VocabularyEntry> = entries.iter().collect();
+        let grouped = group_by_level(&refs);
         assert!(grouped.contains_key("Uncategorized"));
     }
 }

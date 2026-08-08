@@ -1,7 +1,6 @@
-//! Waveform visualization widget (section 18): draws peak-amplitude samples
-//! (from `langspark_core::audio::extract_waveform`) as vertical bars, with
-//! distinct colors for a reference (TTS) waveform vs. the user's recording,
-//! optionally stacked for side-by-side comparison.
+//! Waveform visualization widget: draws peak-amplitude samples (from
+//! `langspark_core::audio::extract_waveform`) as vertical bars, with distinct
+//! colors for a reference (TTS) waveform vs. the user's recording.
 
 use gtk4::prelude::*;
 use gtk4::{gdk, DrawingArea};
@@ -71,23 +70,6 @@ impl Waveform {
     pub fn set_samples(&self, samples: Vec<f32>, color: WaveformColor) {
         self.traces.replace(vec![WaveformTrace { samples: samples.clone(), color }]);
         self.resize_for(&samples);
-        self.area.queue_draw();
-    }
-
-    /// Show reference and user recordings stacked for comparison (task 18.4).
-    pub fn set_comparison(&self, reference: Vec<f32>, user: Vec<f32>) {
-        let width_source = if reference.len() >= user.len() { &reference } else { &user };
-        self.resize_for(width_source);
-        self.traces.replace(vec![
-            WaveformTrace { samples: reference, color: WaveformColor::REFERENCE },
-            WaveformTrace { samples: user, color: WaveformColor::USER },
-        ]);
-        self.area.queue_draw();
-    }
-
-    pub fn clear(&self) {
-        self.traces.replace(Vec::new());
-        self.area.set_content_width(-1);
         self.area.queue_draw();
     }
 

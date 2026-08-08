@@ -12,13 +12,28 @@
 }
 
 .langspark-card {
-    padding: 12px;
-    border-radius: 12px;
+    padding: 14px 16px;
+    border-radius: 14px;
     background-color: @card_bg_color;
+    border: 1px solid alpha(@borders, 0.7);
+    box-shadow:
+        0 1px 1px alpha(black, 0.05),
+        0 2px 6px alpha(black, 0.08);
+    transition: 150ms ease;
 }
 
 .langspark-card:hover {
-    background-color: alpha(@accent_bg_color, 0.08);
+    background-color: alpha(@accent_bg_color, 0.06);
+    border-color: alpha(@accent_bg_color, 0.5);
+    box-shadow:
+        0 1px 2px alpha(black, 0.06),
+        0 6px 16px alpha(black, 0.14);
+}
+
+.langspark-card:active {
+    box-shadow:
+        0 1px 1px alpha(black, 0.05),
+        0 1px 3px alpha(black, 0.1);
 }
 
 .langspark-section-header {
@@ -26,6 +41,14 @@
     font-size: 1.1em;
     margin-top: 6px;
     margin-bottom: 4px;
+}
+
+.langspark-expand-toggle {
+    min-width: 26px;
+    min-height: 26px;
+    padding: 0;
+    font-weight: bold;
+    font-size: 1.1em;
 }
 
 .langspark-score-good {

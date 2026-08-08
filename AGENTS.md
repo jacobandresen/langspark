@@ -2,44 +2,18 @@
 
 This file contains instructions for agents working on the LangSpark project.
 
-## Autonomous Implementation
+## Working from intent, not a spec doc
 
-Agents shall work autonomously, deriving all implementation decisions directly from the OpenSpec specifications. The OpenSpec change proposal in `openspec/changes/langspark/` is the single source of truth for requirements, design decisions, and acceptance criteria.
+There is no separate specification document — `README.md` and `ARCHITECTURE.md` describe current behavior and design decisions; the user's own requests drive what gets built next. When a request is ambiguous, ask rather than guessing.
 
-**Implementation shall be driven by specs, not by external assumptions.** Every feature, every function, and every test shall trace back to a specific requirement in the spec files. If a requirement is ambiguous or missing, clarify it in the spec before proceeding.
-
-The `ROADMAP.md` provides a suggested order of implementation with bite-sized tasks. Follow this roadmap to ensure incremental, testable progress. Each roadmap item references its corresponding spec requirement, enabling direct traceability from implementation to specification.
-
-**Do not wait for instructions.** Use the specs and roadmap to determine the next action. If blocked, refer to the spec to identify what is missing and either implement it or document the gap.
-
-## Decision Authority
-
-- **Specs are authoritative**: If there is a conflict between specs and any other document, the spec prevails
-- **Tests define correctness**: Implementation is complete when all spec scenarios pass their corresponding tests
-- **Document deviations**: If you must deviate from specs, document the reason and update the spec accordingly
+**Do not implement features nobody asked for.** Don't add complexity beyond what the current task requires.
 
 ## Implementation Workflow
 
-1. Read the relevant spec section for the current task
-2. Identify the specific Requirement and Scenario you are implementing
-3. Write the minimal code to satisfy the Scenario
-4. Write tests that verify the Scenario works as specified
-5. Verify all existing tests still pass
-6. Move to the next roadmap item
-
-Do not implement features not specified in the specs. Do not add complexity beyond what the specs require.
-
-## Roadmap Synchronization
-
-The `ROADMAP.md` shall be the living document tracking implementation progress. It must be updated continuously during implementation:
-
-- **Before starting work**: Review ROADMAP.md to understand the current phase and its dependencies
-- **During implementation**: Update task checkboxes in ROADMAP.md as each task is completed (`- [ ]` → `- [x]`)
-- **When specs change**: Update ROADMAP.md to reflect any new or modified requirements from spec changes
-- **When blocked**: Add notes to ROADMAP.md explaining blockers next to relevant tasks
-- **After each session**: Ensure ROADMAP.md accurately reflects the current state
-
-The ROADMAP.md serves as both a planning document and a real-time progress tracker. It is the authoritative source for understanding what has been done, what is in progress, and what remains.
+1. Understand the request and its scope before writing code
+2. Write the minimal code to satisfy it
+3. Write tests that verify the behavior
+4. Verify all existing tests still pass
 
 ## Implementation Guidelines
 
@@ -109,8 +83,8 @@ Coverage gaps shall be identified and addressed before merging significant chang
 
 All data used by LangSpark shall be freely available under permissive licenses. This includes:
 
-- Dictionary datasets (JMdict, Kanjidic, SpanDict)
-- TTS models (VOICEVOX, Piper)
+- Dictionary datasets (JMdict, Kanjidic)
+- TTS models (VOICEVOX)
 - ASR models (qwen3_asr_rs)
 - Any other language resources
 
@@ -141,11 +115,6 @@ data/
 │   │   └── kanjidic.json
 │   ├── tts/
 │   └── README.md          # Contains license information
-├── es/
-│   ├── dictionaries/
-│   │   └── spandict.json
-│   ├── tts/
-│   └── README.md          # Contains license information
 └── README.md              # Global data license overview
 ```
 
@@ -165,7 +134,6 @@ Human-readable code requires human-readable documentation.
 - **Module-level docs**: Every module shall have a doc comment explaining its purpose, responsibilities, and how it fits into the larger system. Include examples of typical usage where helpful.
 - **Public API docs**: All public functions, structs, enums, and traits shall have doc comments explaining their purpose, parameters, return values, and any invariants.
 - **Example code**: Documentation shall include compileable examples where possible, using Rust's `///` doc comment syntax.
-- **Readme-driven development**: Each major component shall have a README.md in its directory explaining its design decisions, data flow, and integration points for new contributors.
 - **Change documentation**: Significant changes shall be documented with clear rationale. Use git commit messages that explain the *why* behind changes, not just the *what*.
 
 ## Code Review Guidelines
@@ -178,21 +146,10 @@ To maintain human readability across the codebase:
 - **Prefer simplicity**: Reject clever solutions that sacrifice readability. Complex problems deserve simple, clear solutions.
 - **Document assumptions**: Code that relies on non-obvious behavior or external constraints shall document those assumptions inline.
 
-## Specification Maintenance
-
-When specs need clarification or updating:
-
-- **Ambiguity**: If a spec is unclear, propose a clarification as a PR to the spec file with reasoning
-- **Missing requirements**: If you discover a necessary requirement not in specs, add it to the appropriate spec file
-- **Changes**: Any spec change must be validated with `openspec validate langspark --type change`
-- **Traceability**: Every code change shall reference the spec requirement it satisfies in commit messages
-- **Roadmap update**: After any spec change, update ROADMAP.md to reflect the new or modified tasks
-
 ## Before Committing
 
 - Run `cargo test` to ensure all tests pass
 - Run `cargo clippy` to catch linting issues
 - Run `cargo fmt` to ensure consistent formatting
 - Verify no license references are missing for data usage
-- Verify your changes trace to specific spec requirements
-- **Update ROADMAP.md**: Ensure all completed tasks are checked off before committing code changes
+- Update `README.md`/`ARCHITECTURE.md` if the change affects what they describe

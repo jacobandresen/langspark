@@ -27,7 +27,7 @@ langspark-gui::state::AppState::load_tab_data()   — single load, one round tri
 app::build_main_window()   — feeds each tab's build_tab(&data) function
         │
         ▼
-vocabulary/kanji/review/statistics tab widgets
+vocabulary/review/pronunciation tab widgets
 ```
 
 Writes flow the other way: a UI action (e.g. rating a review card) calls a
@@ -54,9 +54,8 @@ as a parameter — there's no global "current language" state inside
 `langspark-core` itself, keeping it usable from a hypothetical second UI
 (TUI, web) without carrying GUI assumptions along.
 
-Real-time language switching mid-session is an explicit non-goal (see
-`openspec/changes/langspark/design.md`): switching in Preferences takes
-effect on the next launch, not live.
+Real-time language switching mid-session is an explicit non-goal: switching
+in Preferences takes effect on the next launch, not live.
 
 ## TTS/ASR backend choices (and why they're not what the original proposal said)
 
@@ -66,9 +65,6 @@ effect on the next launch, not live.
   directly to a locally-running [VOICEVOX Engine](https://voicevox.hiroshiba.jp/)
   over its HTTP API with `ureq` — functionally equivalent for an offline-first
   app, since VOICEVOX Engine is the thing distributing the actual voice models.
-- **Spanish TTS**: `piper-rs`, built with `default-features = false` — the
-  default `compile-espeak-intonations` feature's build script fails in this
-  environment; the espeak-based phonemizer still works without it.
 - **ASR** (`qwen3_asr_rs`): real, but its only backends need either a system
   libtorch install (`tch`) or Apple Silicon (`mlx`). It's an optional Cargo
   feature (`asr`) on `langspark-core` so the default build never needs

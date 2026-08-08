@@ -36,8 +36,6 @@ pub struct ReviewItem {
 /// the SM-2 update (e.g. via `SqliteSrsRepository::update_after_review`).
 pub struct ReviewSession {
     pub root: gtk4::Widget,
-    queue: Rc<RefCell<Vec<ReviewItem>>>,
-    index: Rc<Cell<usize>>,
 }
 
 impl ReviewSession {
@@ -232,12 +230,7 @@ impl ReviewSession {
         root.add_controller(key_controller);
         root.set_focusable(true);
 
-        Self { root: root.upcast(), queue, index }
-    }
-
-    /// Number of cards remaining (not yet rated) in the session.
-    pub fn remaining(&self) -> usize {
-        self.queue.borrow().len().saturating_sub(self.index.get())
+        Self { root: root.upcast() }
     }
 }
 

@@ -1,27 +1,24 @@
 # LangSpark
 
-A native, offline-first vocabulary application for mastering languages through spaced repetition and pronunciation practice. Built in Rust with GTK4, LangSpark combines the effectiveness of scientific memory techniques with real-time speech feedback to help you learn Japanese, Spanish, and more.
+A native, offline-first vocabulary application for mastering Japanese through spaced repetition and pronunciation practice. Built in Rust with GTK4, LangSpark combines the effectiveness of scientific memory techniques with real-time speech feedback.
 
 ## Overview
 
-LangSpark is designed for language learners who want a focused, distraction-free environment to build their vocabulary. Unlike web-based solutions, LangSpark runs locally on your machine, ensuring your data stays private and responsive. Whether you're studying kanji, mastering Spanish verbs, or expanding your vocabulary in any supported language, LangSpark adapts to your learning style.
+LangSpark is designed for language learners who want a focused, distraction-free environment to build their vocabulary. Unlike web-based solutions, LangSpark runs locally on your machine, ensuring your data stays private and responsive.
 
 ## Features
 
 ### Spaced Repetition System
-Harness the proven SM-2 algorithm to optimize your review schedule. Cards appear precisely when you're most likely to forget them, maximizing retention with minimal effort. Track your progress with detailed statistics, daily streaks, and retention rates that show your improvement over time.
+Harness the proven SM-2 algorithm (or FSRS, selectable in Preferences) to optimize your review schedule. Cards appear precisely when you're most likely to forget them, maximizing retention with minimal effort.
 
 ### Pronunciation Practice
-Speak with confidence. LangSpark integrates language-specific text-to-speech engines and speech recognition to provide real-time feedback on your pronunciation. Record yourself, compare against native pronunciation, and receive instant scoring with actionable feedback.
+Speak with confidence. LangSpark integrates VOICEVOX (text-to-speech) and Qwen3-ASR (speech recognition) to provide real-time feedback on your pronunciation. Record yourself, compare against native pronunciation, and receive instant scoring with a per-character diff of what was and wasn't heard.
 
 ### Comprehensive Dictionary Integration
-Access rich dictionary data for each language. For Japanese, explore JMdict and Kanjidic with detailed readings, meanings, stroke counts, and example sentences. Spanish support includes comprehensive word definitions and usage examples. Each entry is just a click away from being added to your study deck.
-
-### Language Switching
-Seamlessly switch between installed languages. LangSpark supports Japanese and Spanish out of the box, with architecture designed to accommodate additional languages. Each language maintains its own dictionary data, TTS models, and ASR configurations, all accessible through a unified interface.
+Explore JMdict and Kanjidic with detailed readings, meanings, and example sentences (supplemented by the Tatoeba corpus for words JMdict's own examples don't cover). Each entry is just a click away from being added to your study deck.
 
 ### Native GTK4 Interface
-Inspired by clean, functional design principles, the LangSpark interface organizes your study into intuitive tabs: Vocabulary browser, Kanji lookup (Japanese), Review queue, Pronunciation practice, and Statistics dashboard. Keyboard shortcuts and smooth animations make navigation effortless.
+Inspired by clean, functional design principles, the LangSpark interface organizes your study into intuitive tabs: Vocabulary browser, Review queue, and Pronunciation practice. Keyboard shortcuts make navigation effortless.
 
 ## Architecture
 
@@ -34,12 +31,11 @@ Data persistence uses SQLite for reliability, with language-specific assets (dic
 
 ## Supported Languages
 
+Japanese only, for now.
+
 | Language | Dictionary | TTS Engine | Speech Recognition |
 |----------|------------|------------|-------------------|
 | Japanese | JMdict, Kanjidic (`scriptin/jmdict-simplified` JSON format) | [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) (spoken to over its local HTTP API) | qwen3_asr_rs |
-| Spanish | Custom minimal JSON schema — no maintained JSON dictionary export exists for Spanish; see `langspark_core::dictionary::spanish` | Piper (`piper-rs`, offline ONNX model) | qwen3_asr_rs |
-
-Additional languages can be added by implementing a dictionary loader and wiring up TTS/ASR configuration; see `langspark_core::dictionary` and `langspark_core::tts`.
 
 **Speech recognition** (`qwen3_asr_rs`) is a *default* Cargo feature (`asr`), but its only backends are `tch` (needs a system-wide libtorch install) and `mlx` (Apple Silicon only) — so building it requires libtorch to actually be present. `./scripts/install.sh` sets this up automatically as part of a full install (see below); for day-to-day `cargo build`/`cargo run` during development, run `./scripts/setup-asr.sh` once, then export the `LIBTORCH`/`LD_LIBRARY_PATH` it prints in every shell you build or run from (libtorch is dynamically linked, so both build time *and* runtime need it). Without libtorch available, build with `--no-default-features` — `SpeechRecognizer::transcribe` then reports a clear "unavailable" error instead of failing to compile.
 
@@ -51,7 +47,7 @@ Additional languages can be added by implementing a dictionary loader and wiring
 - GTK4 (4.10+) and libadwaita (1.4+) development libraries
 - An audio backend (ALSA/PulseAudio on Linux, CPAL's default host elsewhere)
 - libtorch, for speech recognition — a *default* Cargo feature (see "Speech recognition" above), so needed to build at all unless you pass `--no-default-features`
-- To use pronunciation practice: a running [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) for Japanese TTS, and a downloaded Piper voice model (`.onnx` + `.onnx.json`) for Spanish TTS
+- To use pronunciation practice: a running [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) for Japanese TTS
 
 `./scripts/install.sh` sets up everything above (except Rust/Cargo itself) automatically — see "Building a release binary" below. The rest of this section covers a manual dev-workflow setup instead.
 
@@ -126,7 +122,7 @@ The optimized binary is at `target/release/langspark-gui`.
 ## Usage
 
 ### Adding Vocabulary
-Browse words by level, topic, or frequency. Click any entry to view details, listen to pronunciation, and add it to your study deck. Kanji entries include readings, meanings, stroke order, and radicals.
+Browse words by JLPT level. Click any entry to view details, listen to pronunciation, and add it to your study deck.
 
 ### Review Sessions
 Your daily review queue automatically populates with cards due for review. Rate each card with Again, Hard, Good, or Easy to update the SRS schedule. The system tracks your progress and adjusts intervals based on your performance.
@@ -139,7 +135,7 @@ Select a word, click Play to hear the native pronunciation, then record yourself
 - **Language**: Rust
 - **UI Framework**: GTK4 with libadwaita
 - **Audio**: CPAL for capture, language-specific TTS engines for synthesis
-- **Speech Recognition**: qwen3_asr_rs (default `asr` feature, needs libtorch; supports Japanese and Spanish among 30+ languages)
+- **Speech Recognition**: qwen3_asr_rs (default `asr` feature, needs libtorch)
 - **Database**: SQLite via rusqlite
 - **Async Runtime**: Tokio
 - **Serialization**: Serde
@@ -155,11 +151,10 @@ LangSpark/
 ├── langspark-gui/      # GTK4/libadwaita UI: tabs, dialogs, widgets, app state
 │   ├── src/
 │   └── data/           # style.css, .desktop file, AppStream metadata
-├── scripts/
-│   ├── install.sh          # Full setup: deps, libtorch+ASR model, VOICEVOX, release build, install, dictionary
-│   ├── setup-asr.sh        # libtorch + Qwen3-ASR model (speech recognition), standalone
-│   └── setup-voicevox.sh   # Local VOICEVOX Engine via Docker (Japanese TTS), standalone
-└── openspec/           # OpenSpec change documentation
+└── scripts/
+    ├── install.sh          # Full setup: deps, libtorch+ASR model, VOICEVOX, release build, install, dictionary
+    ├── setup-asr.sh        # libtorch + Qwen3-ASR model (speech recognition), standalone
+    └── setup-voicevox.sh   # Local VOICEVOX Engine via Docker (Japanese TTS), standalone
 ```
 
 At runtime, LangSpark stores its data under the platform's standard XDG-style
@@ -172,12 +167,7 @@ directories (see `langspark-gui::config::AppDirs`):
 
 ## Contributing
 
-LangSpark is built with OpenSpec methodology. The complete specification is available in the `openspec/changes/langspark/` directory, including:
-
-- `proposal.md`: The vision and capabilities
-- `design.md`: Architecture and technical decisions
-- `tasks.md`: Implementation roadmap
-- `specs/`: Detailed specifications for each capability
+See `ARCHITECTURE.md` for the module layout and design decisions.
 
 ## Contact
 

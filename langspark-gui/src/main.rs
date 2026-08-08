@@ -132,8 +132,5 @@ mod gtk_smoke {
 
         let settings = Rc::new(RefCell::new(crate::config::Settings::default()));
         let _prefs_dialog = preferences::build(settings, |_| {});
-
-        let registry = langspark_core::LanguageRegistry::new();
-        let _selector = widgets::language_selector::LanguageSelector::new(&registry, langspark_core::Language::Japanese);
     }
 }

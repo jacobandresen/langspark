@@ -3,6 +3,7 @@
 
 use crate::config::Settings;
 use adw::prelude::*;
+use anyhow::Context;
 use langspark_core::LanguageRegistry;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -208,134 +209,103 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
             .dictionary_data_dir
             .clone()
             .or_else(|| crate::config::AppDirs::new().map(|d| d.dictionaries_dir()));
+
         let already_installed = dict_dir.as_ref().is_some_and(|d| d.join(format!("{}.json", meta.code)).exists());
-
-        let row = adw::ActionRow::builder()
-            .title(meta.display_name)
-            .subtitle(if already_installed { "Installed" } else { "Not installed" })
-            .build();
-
-        let install_btn = gtk4::Button::builder()
-            .label(if already_installed { "Reinstall" } else { "Install" })
-            .valign(gtk4::Align::Center)
-            .build();
-        row.add_suffix(&install_btn);
-
-        install_btn.connect_clicked(glib::clone!(
-            #[weak]
-            row,
-            #[weak]
-            install_btn,
-            move |_| {
-                let Some(dict_dir) = dict_dir.clone() else {
-                    row.set_subtitle("Couldn't determine dictionary data directory");
-                    return;
-                };
-                install_btn.set_sensitive(false);
-                row.set_subtitle("Installing\u{2026}");
-
-                crate::task::spawn_on_main(glib::clone!(
-                    #[weak]
-                    row,
-                    #[weak]
-                    install_btn,
-                    async move {
-                        let jmdict_dest = dict_dir.join("ja.json");
-                        let kanjidic_dest = dict_dir.join("kanjidic.json");
-
-                        let result = crate::task::run_blocking(move || {
-                            langspark_core::install_jmdict(&jmdict_dest, &|_, _| {})
-                                .and_then(|v| langspark_core::install_kanjidic(&kanjidic_dest, &|_, _| {}).map(|_| v))
-                        })
-                        .await;
-
-                        match result {
-                            Ok(version) => {
-                                row.set_subtitle(&format!("Installed (JMdict {version})"));
-                                install_btn.set_label("Reinstall");
-                            }
-                            Err(e) => {
-                                row.set_subtitle(&format!("Install failed: {e}"));
-                            }
-                        }
-                        install_btn.set_sensitive(true);
-                    }
-                ));
+        install_group.add(&build_install_row(meta.display_name, already_installed, "Not installed", {
+            let dict_dir = dict_dir.clone();
+            move || {
+                let dict_dir = dict_dir.clone().context("couldn't determine dictionary data directory")?;
+                let jmdict_dest = dict_dir.join("ja.json");
+                let kanjidic_dest = dict_dir.join("kanjidic.json");
+                let version = langspark_core::install_jmdict(&jmdict_dest, &|_, _| {})?;
+                langspark_core::install_kanjidic(&kanjidic_dest, &|_, _| {})?;
+                Ok(format!("Installed (JMdict {version})"))
             }
-        ));
-
-        install_group.add(&row);
+        }));
 
         // Supplemental example sentences (Tatoeba corpus) — separate from the
         // dictionary install above since it's a much bigger download (~150MB
         // vs ~50MB) that most words don't strictly need (JMdict's own
         // smaller curated example subset already covers ~85% of common
         // vocabulary — see `installer::install_tatoeba_examples`).
-        let tatoeba_dict_dir = settings
-            .borrow()
-            .dictionary_data_dir
-            .clone()
-            .or_else(|| crate::config::AppDirs::new().map(|d| d.dictionaries_dir()));
-        let tatoeba_already_installed =
-            tatoeba_dict_dir.as_ref().is_some_and(|d| d.join(format!("tatoeba_{}.tsv", meta.code)).exists());
-
-        let tatoeba_row = adw::ActionRow::builder()
-            .title("Example sentences")
-            .subtitle(if tatoeba_already_installed { "Installed" } else { "Not installed (~150MB download)" })
-            .build();
-        let tatoeba_install_btn = gtk4::Button::builder()
-            .label(if tatoeba_already_installed { "Reinstall" } else { "Install" })
-            .valign(gtk4::Align::Center)
-            .build();
-        tatoeba_row.add_suffix(&tatoeba_install_btn);
-
-        let tatoeba_code = meta.code;
-        tatoeba_install_btn.connect_clicked(glib::clone!(
-            #[weak]
-            tatoeba_row,
-            #[weak]
-            tatoeba_install_btn,
-            move |_| {
-                let Some(dict_dir) = tatoeba_dict_dir.clone() else {
-                    tatoeba_row.set_subtitle("Couldn't determine dictionary data directory");
-                    return;
-                };
-                tatoeba_install_btn.set_sensitive(false);
-                tatoeba_row.set_subtitle("Installing\u{2026}");
-
-                crate::task::spawn_on_main(glib::clone!(
-                    #[weak]
-                    tatoeba_row,
-                    #[weak]
-                    tatoeba_install_btn,
-                    async move {
-                        let dest = dict_dir.join(format!("tatoeba_{tatoeba_code}.tsv"));
-                        let result =
-                            crate::task::run_blocking(move || langspark_core::install_tatoeba_examples(&dest, &|_, _| {}))
-                                .await;
-
-                        match result {
-                            Ok(count) => {
-                                tatoeba_row.set_subtitle(&format!("Installed ({count} sentence pairs)"));
-                                tatoeba_install_btn.set_label("Reinstall");
-                            }
-                            Err(e) => {
-                                tatoeba_row.set_subtitle(&format!("Install failed: {e}"));
-                            }
-                        }
-                        tatoeba_install_btn.set_sensitive(true);
-                    }
-                ));
-            }
+        let code = meta.code;
+        let already_installed = dict_dir.as_ref().is_some_and(|d| d.join(format!("tatoeba_{code}.tsv")).exists());
+        install_group.add(&build_install_row(
+            "Example sentences",
+            already_installed,
+            "Not installed (~150MB download)",
+            move || {
+                let dest = dict_dir
+                    .clone()
+                    .context("couldn't determine dictionary data directory")?
+                    .join(format!("tatoeba_{code}.tsv"));
+                let count = langspark_core::install_tatoeba_examples(&dest, &|_, _| {})?;
+                Ok(format!("Installed ({count} sentence pairs)"))
+            },
         ));
-
-        install_group.add(&tatoeba_row);
     }
     study_page.add(&install_group);
 
     dialog.add(&study_page);
 
     dialog
+}
+
+/// Build an "Install"/"Reinstall" row for a downloadable resource. Clicking
+/// the button runs `install` on a background thread and shows its result in
+/// the subtitle: `Ok(message)` becomes the new subtitle (and flips the
+/// button to "Reinstall"), `Err(e)` becomes `"Install failed: {e}"`.
+fn build_install_row(
+    title: &str,
+    already_installed: bool,
+    not_installed_subtitle: &str,
+    install: impl Fn() -> anyhow::Result<String> + Send + Sync + 'static,
+) -> adw::ActionRow {
+    let install = std::sync::Arc::new(install);
+
+    let row = adw::ActionRow::builder()
+        .title(title)
+        .subtitle(if already_installed { "Installed" } else { not_installed_subtitle })
+        .build();
+    let install_btn = gtk4::Button::builder()
+        .label(if already_installed { "Reinstall" } else { "Install" })
+        .valign(gtk4::Align::Center)
+        .build();
+    row.add_suffix(&install_btn);
+
+    install_btn.connect_clicked(glib::clone!(
+        #[weak]
+        row,
+        #[weak]
+        install_btn,
+        #[strong]
+        install,
+        move |_| {
+            install_btn.set_sensitive(false);
+            row.set_subtitle("Installing\u{2026}");
+
+            crate::task::spawn_on_main(glib::clone!(
+                #[weak]
+                row,
+                #[weak]
+                install_btn,
+                #[strong]
+                install,
+                async move {
+                    match crate::task::run_blocking(move || install()).await {
+                        Ok(message) => {
+                            row.set_subtitle(&message);
+                            install_btn.set_label("Reinstall");
+                        }
+                        Err(e) => row.set_subtitle(&format!("Install failed: {e}")),
+                    }
+                    install_btn.set_sensitive(true);
+                }
+            ));
+        }
+    ));
+
+    row
 }
 
 // Widget construction is exercised by the consolidated smoke test in
