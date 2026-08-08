@@ -51,10 +51,10 @@ mod tests {
     #[test]
     fn test_missing_resource_user_message() {
         let err = LangSparkError::MissingResource {
-            language: "Spanish".to_string(),
+            language: "Japanese".to_string(),
             resource: "TTS voice".to_string(),
         };
-        assert!(err.user_message().contains("Spanish"));
+        assert!(err.user_message().contains("Japanese"));
         assert!(err.user_message().contains("Install it from Preferences"));
     }
 

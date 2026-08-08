@@ -38,6 +38,17 @@
     font-weight: bold;
 }
 
+.langspark-diff-missing {
+    color: @error_color;
+    text-decoration: line-through;
+    font-weight: bold;
+}
+
+.langspark-diff-substitute {
+    color: @warning_color;
+    font-weight: bold;
+}
+
 .langspark-waveform {
     background-color: @card_bg_color;
     border-radius: 8px;

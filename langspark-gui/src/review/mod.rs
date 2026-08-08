@@ -17,6 +17,11 @@ use std::rc::Rc;
 pub struct ReviewCardContent {
     pub front: String,
     pub back: String,
+    /// What to pass to the Play button's TTS callback — the reading for
+    /// vocabulary (so kanji with irregular readings are spoken correctly
+    /// rather than guessed from the characters) or a kanji's own reading,
+    /// falling back to `front` when no reading is available.
+    pub speak_text: String,
 }
 
 /// One entry in a review session: the SRS scheduling card plus its display content.
@@ -36,7 +41,11 @@ pub struct ReviewSession {
 }
 
 impl ReviewSession {
-    pub fn new(queue: Vec<ReviewItem>, on_review: impl Fn(usize, u32) + 'static) -> Self {
+    /// `on_play`, if given, speaks a card's `speak_text` through TTS when the
+    /// Play button is clicked — `None` (matching `vocabulary::dialog`'s
+    /// pattern) omits the button entirely rather than showing a disabled one,
+    /// since no language currently reviewed lacks a TTS backend for long.
+    pub fn new(queue: Vec<ReviewItem>, on_review: impl Fn(usize, u32) + 'static, on_play: Option<Rc<dyn Fn(String)>>) -> Self {
         let root = Box::new(Orientation::Vertical, 12);
         root.set_margin_top(12);
         root.set_margin_bottom(12);
@@ -53,6 +62,14 @@ impl ReviewSession {
             .margin_bottom(24)
             .build();
 
+        let play_btn = on_play.is_some().then(|| {
+            gtk4::Button::builder()
+                .icon_name("media-playback-start-symbolic")
+                .halign(gtk4::Align::Center)
+                .tooltip_text("Play the word")
+                .build()
+        });
+
         let show_answer = gtk4::Button::builder().label("Show Answer").halign(gtk4::Align::Center).build();
 
         let rating_box = Box::new(Orientation::Horizontal, 8);
@@ -68,6 +85,9 @@ impl ReviewSession {
 
         root.append(&progress_label);
         root.append(&card_text);
+        if let Some(btn) = &play_btn {
+            root.append(btn);
+        }
         root.append(&show_answer);
         root.append(&rating_box);
 
@@ -84,6 +104,7 @@ impl ReviewSession {
             let card_text = card_text.clone();
             let show_answer_btn = show_answer.clone();
             let rating_box = rating_box.clone();
+            let play_btn = play_btn.clone();
             move || {
                 let q = queue.borrow();
                 let total = q.len();
@@ -96,9 +117,15 @@ impl ReviewSession {
                     progress_label.set_label(&format!("{total} of {total} — done!"));
                     card_text.set_label("Review complete");
                     show_answer_btn.set_visible(false);
+                    if let Some(btn) = &play_btn {
+                        btn.set_visible(false);
+                    }
                 } else {
                     progress_label.set_label(&format!("{} of {total}", i + 1));
                     card_text.set_label(&q[i].content.front);
+                    if let Some(btn) = &play_btn {
+                        btn.set_visible(true);
+                    }
                 }
             }
         };
@@ -126,6 +153,21 @@ impl ReviewSession {
                 }
             }
         ));
+
+        if let (Some(play_btn), Some(on_play)) = (&play_btn, on_play) {
+            play_btn.connect_clicked(glib::clone!(
+                #[strong]
+                queue,
+                #[strong]
+                index,
+                move |_| {
+                    let q = queue.borrow();
+                    if let Some(item) = q.get(index.get()) {
+                        on_play(item.content.speak_text.clone());
+                    }
+                }
+            ));
+        }
 
         for (btn, rating) in [
             (&again_btn, RATING_AGAIN),
@@ -199,6 +241,21 @@ impl ReviewSession {
     }
 }
 
+/// The first kun reading if there is one (more useful to speak than on
+/// readings alone, since most kanji are reviewed in native Japanese words),
+/// otherwise the first on reading — stripped of the `.` okurigana marker
+/// (e.g. "う.ける" -> "うける") and comma-separated alternates dictionaries
+/// list them with, which TTS engines otherwise mispronounce literally.
+fn first_reading(entry: &KanjiEntry) -> Option<String> {
+    let readings = entry.kun_readings.as_deref().or(entry.on_readings.as_deref())?;
+    let first = readings.split(['、', ',']).next()?.trim();
+    if first.is_empty() {
+        None
+    } else {
+        Some(first.replace('.', ""))
+    }
+}
+
 /// Build review items by matching each SRS card to its vocabulary/kanji
 /// content via `vocab_id`/`kanji_id`. Cards whose referenced entry can't be
 /// found are skipped (shouldn't normally happen — it means the entry was
@@ -211,11 +268,13 @@ pub fn build_items_from_cards(cards: &[SrsCard], vocab: &[VocabularyEntry], kanj
                 vocab.iter().find(|v| v.id == Some(vocab_id)).map(|v| ReviewCardContent {
                     front: v.word.clone(),
                     back: format!("{}\n{}", v.reading.clone().unwrap_or_default(), v.meaning),
+                    speak_text: v.reading.clone().unwrap_or_else(|| v.word.clone()),
                 })
             } else if let Some(kanji_id) = card.kanji_id {
                 kanji.iter().find(|k| k.id == Some(kanji_id)).map(|k| ReviewCardContent {
                     front: k.character.clone(),
                     back: k.meanings.clone(),
+                    speak_text: first_reading(k).unwrap_or_else(|| k.character.clone()),
                 })
             } else {
                 None
@@ -232,7 +291,11 @@ pub(crate) mod tests {
     pub(crate) fn sample_item(front: &str) -> ReviewItem {
         ReviewItem {
             card: SrsCard::new("vocabulary", "ja"),
-            content: ReviewCardContent { front: front.to_string(), back: "back".to_string() },
+            content: ReviewCardContent {
+                front: front.to_string(),
+                back: "back".to_string(),
+                speak_text: front.to_string(),
+            },
         }
     }
 

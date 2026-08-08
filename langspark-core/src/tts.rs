@@ -1,10 +1,8 @@
-//! Text-to-speech: a language-agnostic `TtsBackend` trait plus the two
-//! concrete engines LangSpark uses — VOICEVOX (Japanese) and Piper (Spanish
-//! and other languages).
+//! Text-to-speech: a `TtsBackend` trait plus the VOICEVOX engine LangSpark
+//! uses for Japanese (its only supported language for now).
 
 use anyhow::{Context, Result};
 use std::io::Read;
-use std::path::{Path, PathBuf};
 
 /// Trait for text-to-speech engines. Implementations return WAV-encoded audio.
 pub trait TtsBackend {
@@ -84,96 +82,14 @@ impl TtsBackend for VoicevoxTts {
     }
 }
 
-// ---------------------------------------------------------------------
-// Piper (Spanish and other languages)
-// ---------------------------------------------------------------------
-
-/// Wraps a `piper-rs` ONNX voice model for offline synthesis.
-pub struct PiperTts {
-    piper: std::sync::Mutex<piper_rs::Piper>,
-    sample_rate: u32,
-}
-
-impl PiperTts {
-    /// Load a Piper voice from its `.onnx` model and `.onnx.json` config files.
-    pub fn load(model_path: &Path, config_path: &Path) -> Result<Self> {
-        let piper = piper_rs::Piper::new(model_path, config_path)
-            .map_err(|e| anyhow::anyhow!("failed to load Piper model: {e}"))?;
-        // Sample rate isn't exposed after construction, so re-read it from the config file.
-        let config_json = std::fs::read_to_string(config_path).context("failed to read Piper config")?;
-        let config: serde_json::Value =
-            serde_json::from_str(&config_json).context("failed to parse Piper config")?;
-        let sample_rate = config["audio"]["sample_rate"].as_u64().unwrap_or(22_050) as u32;
-
-        Ok(Self { piper: std::sync::Mutex::new(piper), sample_rate })
-    }
-}
-
-impl TtsBackend for PiperTts {
-    fn synthesize(&self, text: &str) -> Result<Vec<u8>> {
-        let mut piper = self.piper.lock().map_err(|_| anyhow::anyhow!("Piper model lock poisoned"))?;
-        let (samples, sample_rate) = piper
-            .create(text, false, None, None, None, None)
-            .map_err(|e| anyhow::anyhow!("Piper synthesis failed: {e}"))?;
-        let sample_rate = if sample_rate > 0 { sample_rate } else { self.sample_rate };
-        crate::audio::encode_wav(&samples, sample_rate)
-    }
-}
-
-// ---------------------------------------------------------------------
-// Voice selection configuration
-// ---------------------------------------------------------------------
-
-/// Which TTS voice to use for a language, and where its files live (Piper only).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct VoiceConfig {
-    pub language: String,
-    pub voice_id: String,
-    /// Piper only: path to the `.onnx` model file
-    pub model_path: Option<PathBuf>,
-    /// Piper only: path to the `.onnx.json` config file
-    pub config_path: Option<PathBuf>,
-}
-
-impl VoiceConfig {
-    pub fn voicevox(voice_id: &str) -> Self {
-        Self {
-            language: "ja".to_string(),
-            voice_id: voice_id.to_string(),
-            model_path: None,
-            config_path: None,
-        }
-    }
-
-    pub fn piper(language: &str, voice_id: &str, model_path: PathBuf, config_path: PathBuf) -> Self {
-        Self {
-            language: language.to_string(),
-            voice_id: voice_id.to_string(),
-            model_path: Some(model_path),
-            config_path: Some(config_path),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_unavailable_tts_reports_reason() {
-        let tts = UnavailableTts::new("Spanish voice model not downloaded");
-        let err = tts.synthesize("hola").unwrap_err();
-        assert!(err.to_string().contains("Spanish voice model not downloaded"));
-    }
-
-    #[test]
-    fn test_voice_config_constructors() {
-        let ja = VoiceConfig::voicevox("zundamon");
-        assert_eq!(ja.language, "ja");
-        assert!(ja.model_path.is_none());
-
-        let es = VoiceConfig::piper("es", "es_es-mls-medium", "model.onnx".into(), "model.onnx.json".into());
-        assert_eq!(es.language, "es");
-        assert!(es.model_path.is_some());
+        let tts = UnavailableTts::new("voice model not downloaded");
+        let err = tts.synthesize("hello").unwrap_err();
+        assert!(err.to_string().contains("voice model not downloaded"));
     }
 }

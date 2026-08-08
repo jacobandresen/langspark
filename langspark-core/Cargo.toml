@@ -46,8 +46,9 @@ ureq = { version = "2", features = ["json"] }
 flate2 = "1.0"
 tar = "0.4"
 
-# TTS (Spanish and others) - ONNX runtime + espeak-ng phonemizer, no libtorch needed
-piper-rs = { version = "0.2", default-features = false }
+# Example-sentence installer: decompresses Tatoeba's .tsv.bz2 exports
+# (pure-Rust decoder only, no system libbz2 dependency).
+bzip2-rs = "0.1"
 
 # ASR - requires a libtorch install (LIBTORCH env var or system-wide /usr/lib/libtorch.so).
 # Enabled by default; `scripts/setup-asr.sh` (run automatically by `scripts/install.sh`)

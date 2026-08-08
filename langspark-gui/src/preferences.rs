@@ -1,5 +1,5 @@
 //! Preferences dialog: language, dictionary location, TTS voices, SRS
-//! algorithm/params, UI theme, audio devices, cache cleanup, language install.
+//! algorithm/params, audio devices, cache cleanup, language install.
 
 use crate::config::Settings;
 use adw::prelude::*;
@@ -48,33 +48,6 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
     language_group.add(&language_row);
     general_page.add(&language_group);
 
-    let theme_group = adw::PreferencesGroup::builder().title("Appearance").build();
-    let theme_model = gtk4::StringList::new(&["System", "Light", "Dark"]);
-    let theme_row = adw::ComboRow::builder().title("Theme").model(&theme_model).build();
-    theme_row.set_selected(match settings.borrow().ui_theme.as_str() {
-        "light" => 1,
-        "dark" => 2,
-        _ => 0,
-    });
-    theme_row.connect_selected_notify(glib::clone!(
-        #[strong]
-        settings,
-        #[strong]
-        on_save,
-        move |row| {
-            let theme = match row.selected() {
-                1 => "light",
-                2 => "dark",
-                _ => "system",
-            };
-            settings.borrow_mut().ui_theme = theme.to_string();
-            apply_theme(theme);
-            on_save(&settings.borrow());
-        }
-    ));
-    theme_group.add(&theme_row);
-    general_page.add(&theme_group);
-
     let dict_group = adw::PreferencesGroup::builder().title("Dictionary Data").build();
     let dict_row = adw::ActionRow::builder()
         .title("Data location")
@@ -109,20 +82,6 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
         }
     ));
     voice_group.add(&ja_voice_row);
-
-    let es_voice_row = adw::EntryRow::builder().title("Spanish voice (Piper model)").build();
-    es_voice_row.set_text(&settings.borrow().tts_voice_es);
-    es_voice_row.connect_changed(glib::clone!(
-        #[strong]
-        settings,
-        #[strong]
-        on_save,
-        move |row| {
-            settings.borrow_mut().tts_voice_es = row.text().to_string();
-            on_save(&settings.borrow());
-        }
-    ));
-    voice_group.add(&es_voice_row);
     audio_page.add(&voice_group);
 
     let device_group = adw::PreferencesGroup::builder().title("Audio Devices").build();
@@ -243,97 +202,140 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
     study_page.add(&srs_group);
 
     let install_group = adw::PreferencesGroup::builder().title("Language Installation").build();
-    for lang in registry.get_available_languages() {
-        if let Some(meta) = registry.get_metadata(lang) {
-            let dict_dir = settings
-                .borrow()
-                .dictionary_data_dir
-                .clone()
-                .or_else(|| crate::config::AppDirs::new().map(|d| d.dictionaries_dir()));
-            let already_installed =
-                dict_dir.as_ref().is_some_and(|d| d.join(format!("{}.json", meta.code)).exists());
+    if let Some(meta) = registry.get_metadata(langspark_core::Language::Japanese) {
+        let dict_dir = settings
+            .borrow()
+            .dictionary_data_dir
+            .clone()
+            .or_else(|| crate::config::AppDirs::new().map(|d| d.dictionaries_dir()));
+        let already_installed = dict_dir.as_ref().is_some_and(|d| d.join(format!("{}.json", meta.code)).exists());
 
-            let row = adw::ActionRow::builder()
-                .title(meta.display_name)
-                .subtitle(if already_installed { "Installed" } else { "Not installed" })
-                .build();
+        let row = adw::ActionRow::builder()
+            .title(meta.display_name)
+            .subtitle(if already_installed { "Installed" } else { "Not installed" })
+            .build();
 
-            if meta.code == "ja" {
-                let install_btn = gtk4::Button::builder()
-                    .label(if already_installed { "Reinstall" } else { "Install" })
-                    .valign(gtk4::Align::Center)
-                    .build();
-                row.add_suffix(&install_btn);
+        let install_btn = gtk4::Button::builder()
+            .label(if already_installed { "Reinstall" } else { "Install" })
+            .valign(gtk4::Align::Center)
+            .build();
+        row.add_suffix(&install_btn);
 
-                install_btn.connect_clicked(glib::clone!(
+        install_btn.connect_clicked(glib::clone!(
+            #[weak]
+            row,
+            #[weak]
+            install_btn,
+            move |_| {
+                let Some(dict_dir) = dict_dir.clone() else {
+                    row.set_subtitle("Couldn't determine dictionary data directory");
+                    return;
+                };
+                install_btn.set_sensitive(false);
+                row.set_subtitle("Installing\u{2026}");
+
+                crate::task::spawn_on_main(glib::clone!(
                     #[weak]
                     row,
                     #[weak]
                     install_btn,
-                    move |_| {
-                        let Some(dict_dir) = dict_dir.clone() else {
-                            row.set_subtitle("Couldn't determine dictionary data directory");
-                            return;
-                        };
-                        install_btn.set_sensitive(false);
-                        row.set_subtitle("Installing\u{2026}");
+                    async move {
+                        let jmdict_dest = dict_dir.join("ja.json");
+                        let kanjidic_dest = dict_dir.join("kanjidic.json");
 
-                        crate::task::spawn_on_main(glib::clone!(
-                            #[weak]
-                            row,
-                            #[weak]
-                            install_btn,
-                            async move {
-                                let jmdict_dest = dict_dir.join("ja.json");
-                                let kanjidic_dest = dict_dir.join("kanjidic.json");
+                        let result = crate::task::run_blocking(move || {
+                            langspark_core::install_jmdict(&jmdict_dest, &|_, _| {})
+                                .and_then(|v| langspark_core::install_kanjidic(&kanjidic_dest, &|_, _| {}).map(|_| v))
+                        })
+                        .await;
 
-                                let result = crate::task::run_blocking(move || {
-                                    langspark_core::install_jmdict(&jmdict_dest, &|_, _| {})
-                                        .and_then(|v| langspark_core::install_kanjidic(&kanjidic_dest, &|_, _| {}).map(|_| v))
-                                })
-                                .await;
-
-                                match result {
-                                    Ok(version) => {
-                                        row.set_subtitle(&format!("Installed (JMdict {version})"));
-                                        install_btn.set_label("Reinstall");
-                                    }
-                                    Err(e) => {
-                                        row.set_subtitle(&format!("Install failed: {e}"));
-                                    }
-                                }
-                                install_btn.set_sensitive(true);
+                        match result {
+                            Ok(version) => {
+                                row.set_subtitle(&format!("Installed (JMdict {version})"));
+                                install_btn.set_label("Reinstall");
                             }
-                        ));
+                            Err(e) => {
+                                row.set_subtitle(&format!("Install failed: {e}"));
+                            }
+                        }
+                        install_btn.set_sensitive(true);
                     }
                 ));
-            } else {
-                let install_btn = gtk4::Button::builder().label("Install").valign(gtk4::Align::Center).build();
-                install_btn.set_sensitive(false);
-                install_btn.set_tooltip_text(Some(
-                    "No automated installer available for this language yet — there's no maintained JSON \
-                     dictionary export to download from. See dictionary.rs for the manual format.",
-                ));
-                row.add_suffix(&install_btn);
             }
+        ));
 
-            install_group.add(&row);
-        }
+        install_group.add(&row);
+
+        // Supplemental example sentences (Tatoeba corpus) — separate from the
+        // dictionary install above since it's a much bigger download (~150MB
+        // vs ~50MB) that most words don't strictly need (JMdict's own
+        // smaller curated example subset already covers ~85% of common
+        // vocabulary — see `installer::install_tatoeba_examples`).
+        let tatoeba_dict_dir = settings
+            .borrow()
+            .dictionary_data_dir
+            .clone()
+            .or_else(|| crate::config::AppDirs::new().map(|d| d.dictionaries_dir()));
+        let tatoeba_already_installed =
+            tatoeba_dict_dir.as_ref().is_some_and(|d| d.join(format!("tatoeba_{}.tsv", meta.code)).exists());
+
+        let tatoeba_row = adw::ActionRow::builder()
+            .title("Example sentences")
+            .subtitle(if tatoeba_already_installed { "Installed" } else { "Not installed (~150MB download)" })
+            .build();
+        let tatoeba_install_btn = gtk4::Button::builder()
+            .label(if tatoeba_already_installed { "Reinstall" } else { "Install" })
+            .valign(gtk4::Align::Center)
+            .build();
+        tatoeba_row.add_suffix(&tatoeba_install_btn);
+
+        let tatoeba_code = meta.code;
+        tatoeba_install_btn.connect_clicked(glib::clone!(
+            #[weak]
+            tatoeba_row,
+            #[weak]
+            tatoeba_install_btn,
+            move |_| {
+                let Some(dict_dir) = tatoeba_dict_dir.clone() else {
+                    tatoeba_row.set_subtitle("Couldn't determine dictionary data directory");
+                    return;
+                };
+                tatoeba_install_btn.set_sensitive(false);
+                tatoeba_row.set_subtitle("Installing\u{2026}");
+
+                crate::task::spawn_on_main(glib::clone!(
+                    #[weak]
+                    tatoeba_row,
+                    #[weak]
+                    tatoeba_install_btn,
+                    async move {
+                        let dest = dict_dir.join(format!("tatoeba_{tatoeba_code}.tsv"));
+                        let result =
+                            crate::task::run_blocking(move || langspark_core::install_tatoeba_examples(&dest, &|_, _| {}))
+                                .await;
+
+                        match result {
+                            Ok(count) => {
+                                tatoeba_row.set_subtitle(&format!("Installed ({count} sentence pairs)"));
+                                tatoeba_install_btn.set_label("Reinstall");
+                            }
+                            Err(e) => {
+                                tatoeba_row.set_subtitle(&format!("Install failed: {e}"));
+                            }
+                        }
+                        tatoeba_install_btn.set_sensitive(true);
+                    }
+                ));
+            }
+        ));
+
+        install_group.add(&tatoeba_row);
     }
     study_page.add(&install_group);
 
     dialog.add(&study_page);
 
     dialog
-}
-
-fn apply_theme(theme: &str) {
-    let style_manager = adw::StyleManager::default();
-    style_manager.set_color_scheme(match theme {
-        "light" => adw::ColorScheme::ForceLight,
-        "dark" => adw::ColorScheme::ForceDark,
-        _ => adw::ColorScheme::Default,
-    });
 }
 
 // Widget construction is exercised by the consolidated smoke test in

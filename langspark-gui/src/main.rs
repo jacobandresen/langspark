@@ -9,12 +9,10 @@ use gtk4::prelude::*;
 mod app;
 mod config;
 mod diagnostics;
-mod kanji;
 mod preferences;
 mod pronunciation;
 mod review;
 mod state;
-mod statistics;
 mod task;
 mod ui;
 mod vocabulary;
@@ -93,7 +91,7 @@ fn main() -> glib::ExitCode {
 /// display is available, e.g. headless CI without Xvfb.
 #[cfg(test)]
 mod gtk_smoke {
-    use crate::{app, kanji, preferences, pronunciation, review, statistics, vocabulary, widgets};
+    use crate::{app, preferences, pronunciation, review, vocabulary, widgets};
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
@@ -124,18 +122,11 @@ mod gtk_smoke {
             },
         );
 
-        let kanji_entry = kanji::dialog::tests::sample_entry();
-        let _kanji_dialog = kanji::dialog::build(&kanji_entry);
-        let _kanji_tab = kanji::build_tab(&[kanji_entry]);
-
         let review_items = vec![review::tests::sample_item("front")];
-        let _review_session = review::ReviewSession::new(review_items, |_, _| {});
+        let _review_session = review::ReviewSession::new(review_items, |_, _| {}, None);
 
         let words = vec![pronunciation::PracticeWord { text: "受け取る".to_string(), reading: None }];
         let _pronunciation_tab = pronunciation::PronunciationTab::new(words, pronunciation::tests::noop_callbacks());
-
-        let stats = langspark_core::ReviewStats::default();
-        let _stats_tab = statistics::build_tab(&stats, &[], &[], &[]);
 
         let _waveform = widgets::waveform::Waveform::new();
 

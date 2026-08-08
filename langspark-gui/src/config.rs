@@ -9,21 +9,17 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
-    /// Active language code ("ja", "es")
+    /// Active language code ("ja" — the only supported language for now)
     pub active_language: String,
     /// Override for where dictionary JSON files are read from
     pub dictionary_data_dir: Option<PathBuf>,
     /// VOICEVOX speaker/style ID string for Japanese TTS
     pub tts_voice_ja: String,
-    /// Piper voice identifier for Spanish TTS
-    pub tts_voice_es: String,
     /// "sm2" or "fsrs"
     pub srs_algorithm: String,
     /// Initial ease factor assigned to newly-created SRS cards (SM-2 range
     /// 1.3-3.0; ignored by FSRS, which derives its own initial difficulty).
     pub starting_ease_factor: f64,
-    /// "system", "light", or "dark"
-    pub ui_theme: String,
     /// CPAL input device name, or None for the system default
     pub audio_input_device: Option<String>,
     /// CPAL/rodio output device name, or None for the system default
@@ -36,10 +32,8 @@ impl Default for Settings {
             active_language: "ja".to_string(),
             dictionary_data_dir: None,
             tts_voice_ja: "zundamon".to_string(),
-            tts_voice_es: "es_es-mls-medium".to_string(),
             srs_algorithm: "sm2".to_string(),
             starting_ease_factor: 2.5,
-            ui_theme: "system".to_string(),
             audio_input_device: None,
             audio_output_device: None,
         }
@@ -71,7 +65,7 @@ impl Settings {
     }
 
     /// Apply `LANGSPARK_*` environment variable overrides on top of loaded
-    /// values, so e.g. `LANGSPARK_ACTIVE_LANGUAGE=es` wins over the file.
+    /// values, so e.g. `LANGSPARK_TTS_VOICE_JA=some-other-speaker` wins over the file.
     pub fn apply_env_overrides(&mut self) {
         if let Ok(v) = std::env::var("LANGSPARK_ACTIVE_LANGUAGE") {
             self.active_language = v;
@@ -82,14 +76,8 @@ impl Settings {
         if let Ok(v) = std::env::var("LANGSPARK_TTS_VOICE_JA") {
             self.tts_voice_ja = v;
         }
-        if let Ok(v) = std::env::var("LANGSPARK_TTS_VOICE_ES") {
-            self.tts_voice_es = v;
-        }
         if let Ok(v) = std::env::var("LANGSPARK_SRS_ALGORITHM") {
             self.srs_algorithm = v;
-        }
-        if let Ok(v) = std::env::var("LANGSPARK_UI_THEME") {
-            self.ui_theme = v;
         }
     }
 }

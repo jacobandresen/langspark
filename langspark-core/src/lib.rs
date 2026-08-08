@@ -31,15 +31,15 @@ pub use asr::{SpeechRecognizer, TranscriptionResult};
 pub use audio::{audio_devices_available, list_audio_devices, AudioCache, AudioManager, AudioPlayer, AudioRecorder};
 pub use error::LangSparkError;
 pub use database::{Database, Repository, default_migrations, initialize_schema, run_migrations, Migration};
-pub use dictionary::{Dictionary, DictionaryManager, ExampleSentence, VocabEntry, VocabFilter};
-pub use installer::{install_jmdict, install_kanjidic};
+pub use dictionary::{Dictionary, DictionaryManager, ExampleSentence, TatoebaExamples, VocabEntry, VocabFilter};
+pub use installer::{install_jmdict, install_kanjidic, install_tatoeba_examples};
 pub use language::{InstallationStatus, Language, LanguageInfo, LanguageManager, LanguageRegistry};
 pub use logging::init_logging;
 pub use model::{Meaning, Reading, Word};
 pub use seed::{ja_school_vocabulary_len, seed_ja_school_vocabulary};
 pub use pronunciation::{
-    levenshtein_distance, score_pronunciation, score_pronunciation_tier2, segment_units, PronunciationResult,
-    PronunciationScorer,
+    diff_chars, levenshtein_distance, score_pronunciation, score_pronunciation_tier2, segment_units, DiffOp,
+    PronunciationResult, PronunciationScorer,
 };
 pub use repositories::{
     Deck, KanjiEntry, LanguageRecord, ReviewRecord, SqliteDeckRepository, SqliteKanjiRepository,
@@ -50,7 +50,7 @@ pub use srs::{
     build_review_stats, calculate_retention_rate, calculate_streak, CardState, DeckManager, FSRSBackend, ReviewStats,
     SrsBackend, SrsCard, SrsManager, SM2Backend, RATING_AGAIN, RATING_EASY, RATING_GOOD, RATING_HARD,
 };
-pub use tts::{PiperTts, TtsBackend, UnavailableTts, VoiceConfig, VoicevoxTts};
+pub use tts::{TtsBackend, UnavailableTts, VoicevoxTts};
 
 /// Rating for SRS (1=Again, 2=Hard, 3=Good, 4=Easy)
 pub type SrsRating = u32;

@@ -4,7 +4,7 @@
 
 use crate::config::Settings;
 use crate::state::AppState;
-use crate::{diagnostics, kanji, pronunciation, review, statistics, vocabulary};
+use crate::{diagnostics, pronunciation, review, vocabulary};
 use adw::prelude::*;
 use adw::{
     Application as AdwApplication, ApplicationWindow as AdwApplicationWindow, HeaderBar, ToastOverlay, ToolbarView,
@@ -19,13 +19,17 @@ use std::sync::Arc;
 
 /// Main application window and its toast overlay (for `diagnostics::show_error_toast`).
 ///
-/// Vocabulary/kanji/statistics tabs are populated from `state` (loaded
-/// synchronously at startup — SQLite reads of this size are fast enough not
-/// to warrant the complexity of an async loading placeholder). The review
-/// tab persists each rating asynchronously via `task::run_blocking` so a
-/// slow disk doesn't stall the UI thread. The pronunciation tab's TTS/ASR
-/// callbacks report "unavailable" until real backends are configured in
-/// Preferences, per the graceful-degradation approach in `tts::UnavailableTts`.
+/// The Vocabulary tab is populated from `state` (loaded synchronously at
+/// startup — SQLite reads of this size are fast enough not to warrant the
+/// complexity of an async loading placeholder). The review tab persists each
+/// rating asynchronously via `task::run_blocking` so a slow disk doesn't
+/// stall the UI thread. The pronunciation tab's TTS/ASR callbacks report
+/// "unavailable" until real backends are configured in Preferences, per the
+/// graceful-degradation approach in `tts::UnavailableTts`.
+///
+/// The Kanji and Statistics tabs are temporarily dropped from the switcher
+/// (not deleted — `kanji.rs`/`statistics.rs` and their data loading are
+/// untouched, just unwired here) until they're revisited.
 pub fn build_main_window(
     app: &AdwApplication,
     active_language: Language,
@@ -49,8 +53,6 @@ pub fn build_main_window(
                 vocabulary: Vec::new(),
                 kanji: Vec::new(),
                 due_cards: Vec::new(),
-                stats: langspark_core::ReviewStats::default(),
-                deck_stats: Vec::new(),
             }
         }
     };
@@ -70,15 +72,11 @@ pub fn build_main_window(
     let vocab_page = view_stack.add_titled(&vocab_widget, Some("vocabulary"), "Vocabulary");
     vocab_page.set_icon_name(Some("accessories-dictionary-symbolic"));
 
-    let kanji_widget = kanji::build_tab(&tab_data.kanji);
-    let kanji_page = view_stack.add_titled(&kanji_widget, Some("kanji"), "Kanji");
-    kanji_page.set_icon_name(Some("font-x-generic-symbolic"));
-    kanji_page.set_visible(kanji::is_visible_for(active_language));
-
     let review_items = review::build_items_from_cards(&tab_data.due_cards, &tab_data.vocabulary, &tab_data.kanji);
     // Captured alongside the queue so `on_review`'s index can be mapped back
     // to the database row id `SqliteSrsRepository::update_after_review` needs.
     let review_card_ids: Vec<Option<i64>> = review_items.iter().map(|item| item.card.id).collect();
+    let review_play_callback = vocab_play_callback(active_language, &settings.borrow(), &toast_overlay);
     let review_session = review::ReviewSession::new(
         review_items,
         glib::clone!(
@@ -105,6 +103,7 @@ pub fn build_main_window(
                 });
             }
         ),
+        review_play_callback,
     );
     let review_page = view_stack.add_titled(&review_session.root, Some("review"), "Review");
     review_page.set_icon_name(Some("view-refresh-symbolic"));
@@ -119,10 +118,6 @@ pub fn build_main_window(
     let pronunciation_page =
         view_stack.add_titled(&pronunciation_tab.widget, Some("pronunciation"), "Pronunciation");
     pronunciation_page.set_icon_name(Some("audio-input-microphone-symbolic"));
-
-    let stats_widget = statistics::build_tab(&tab_data.stats, &[], &[], &tab_data.deck_stats);
-    let stats_page = view_stack.add_titled(&stats_widget, Some("statistics"), "Statistics");
-    stats_page.set_icon_name(Some("x-office-spreadsheet-symbolic"));
 
     // Header: view switcher as the title, language indicator, app menu
     let switcher_title = ViewSwitcherTitle::builder().stack(&view_stack).title("LangSpark").build();
@@ -331,7 +326,7 @@ fn dictionary_add_word_callbacks(
 }
 
 const HELP_TEXT: &str = "\
-Vocabulary & Kanji — Browse entries grouped by level. Click \"Show All\" to see \
+Vocabulary — Browse entries grouped by level. Click \"Show All\" to see \
 every entry in a section as a grid.
 
 Review — Cards due today appear one at a time. Click \"Show Answer\" to reveal \
@@ -342,17 +337,18 @@ Pronunciation — Pick a word, click Play to hear a reference pronunciation, \
 then Record to attempt it yourself. You'll get a score and feedback. \
 Requires a TTS backend configured in Preferences.
 
-Statistics — Your review history, streak, retention rate, and per-deck \
-progress.
-
 Preferences — Change the active language (takes effect on restart), TTS \
-voices, SRS algorithm, theme, and audio devices.";
+voices, SRS algorithm, and audio devices.";
 
-fn unavailable_pronunciation_callbacks(active_language: Language) -> pronunciation::PronunciationCallbacks {
+fn unavailable_pronunciation_callbacks(
+    active_language: Language,
+    device_name: Option<String>,
+) -> pronunciation::PronunciationCallbacks {
     let code = active_language.code();
     pronunciation::PronunciationCallbacks {
         synthesize: Box::new(|_| anyhow::bail!("no TTS backend configured yet — set one up in Preferences")),
-        record: build_record(),
+        record: build_record(device_name),
+        record_duration: RECORDING_DURATION,
         play: Box::new(|_| anyhow::bail!("no audio output backend configured yet")),
         score: Box::new(move |r, e| langspark_core::score_pronunciation(r, e, code)),
         transcribe: build_transcribe(active_language),
@@ -400,17 +396,19 @@ fn build_transcribe(active_language: Language) -> Box<dyn Fn(&[f32], u32) -> any
 const RECORDING_DURATION: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Build the `record` callback shared by every language: capture
-/// `RECORDING_DURATION` of audio from the default microphone via `cpal`
-/// (`AudioRecorder`). Doesn't depend on TTS/dictionary availability, so it's
-/// wired the same way regardless of which language is active.
-fn build_record() -> Box<dyn Fn() -> anyhow::Result<(Vec<f32>, u32)> + Send + Sync> {
-    Box::new(|| {
+/// `RECORDING_DURATION` of audio via `cpal` (`AudioRecorder`), from
+/// `device_name` if set (the `audio_input_device` Preference) or the system
+/// default input device otherwise. Doesn't depend on TTS/dictionary
+/// availability, so it's wired the same way regardless of which language is
+/// active.
+fn build_record(device_name: Option<String>) -> Box<dyn Fn() -> anyhow::Result<(Vec<f32>, u32)> + Send + Sync> {
+    Box::new(move || {
         // `AudioRecorder` (and the `cpal::Stream` it owns) isn't `Send`, but
         // that's fine here: it's created, used, and dropped entirely within
         // this closure's single call to `task::run_blocking`, never crossing
-        // a thread boundary itself — only this closure (which captures
-        // nothing) needs to be `Send`.
-        let recorder = langspark_core::AudioRecorder::start()?;
+        // a thread boundary itself — only this closure (which captures a
+        // plain `String`) needs to be `Send`.
+        let recorder = langspark_core::AudioRecorder::start_with_device(device_name.as_deref())?;
         std::thread::sleep(RECORDING_DURATION);
         Ok(recorder.stop())
     })
@@ -436,21 +434,15 @@ fn resolve_voicevox_speaker_id(voice: &str) -> u32 {
     }
 }
 
-/// Build a `synthesize(text) -> WAV bytes` closure for `active_language`,
-/// shared between the pronunciation tab's Play button and the vocabulary
-/// detail dialog's Play button (`vocab_play_callback`). `None` if no TTS
-/// backend is available for the language — currently Japanese only (Piper/
-/// Spanish needs a downloaded `.onnx` voice model and there's no installer
-/// for one yet, see ROADMAP.md Phase 8). Synthesized audio is cached to disk
-/// so repeat playback of the same word doesn't re-synthesize it.
+/// Build a `synthesize(text) -> WAV bytes` closure for `active_language`
+/// (currently always Japanese, spoken through VOICEVOX), shared between the
+/// pronunciation tab's Play button and the vocabulary detail dialog's Play
+/// button (`vocab_play_callback`). Synthesized audio is cached to disk so
+/// repeat playback of the same word doesn't re-synthesize it.
 fn build_synthesize(
     active_language: Language,
     settings: &Settings,
 ) -> Option<Box<dyn Fn(&str) -> anyhow::Result<Vec<u8>> + Send + Sync>> {
-    if active_language != Language::Japanese {
-        return None;
-    }
-
     let code = active_language.code();
     let cache_dir = crate::config::AppDirs::new().map(|d| d.audio_cache_dir());
     let speaker_id = resolve_voicevox_speaker_id(&settings.tts_voice_ja);
@@ -475,20 +467,20 @@ fn build_synthesize(
 /// Build the pronunciation tab's playback callbacks. Japanese speaks through
 /// a locally-running VOICEVOX Engine (default `http://127.0.0.1:50021` — the
 /// user must have it running separately; there's no bundled offline engine).
-/// Spanish stays "unavailable" (see `build_synthesize`). Recording/
-/// transcription (speech recognition) are wired the same way for every
-/// language — see `build_record`/`build_transcribe`.
+/// Recording/transcription (speech recognition) are wired the same way
+/// regardless of language — see `build_record`/`build_transcribe`.
 fn pronunciation_callbacks(active_language: Language, settings: &Settings) -> pronunciation::PronunciationCallbacks {
     let code = active_language.code();
     let Some(synthesize) = build_synthesize(active_language, settings) else {
-        return unavailable_pronunciation_callbacks(active_language);
+        return unavailable_pronunciation_callbacks(active_language, settings.audio_input_device.clone());
     };
 
     let play_cache_dir = crate::config::AppDirs::new().map(|d| d.audio_cache_dir());
 
     pronunciation::PronunciationCallbacks {
         synthesize,
-        record: build_record(),
+        record: build_record(settings.audio_input_device.clone()),
+        record_duration: RECORDING_DURATION,
         play: Box::new(move |wav: Vec<u8>| {
             let dir = play_cache_dir.clone().unwrap_or_else(std::env::temp_dir);
             langspark_core::AudioManager::new(dir).play(wav)

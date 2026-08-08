@@ -1,6 +1,6 @@
 //! Vocabulary tab: browse vocabulary entries grouped into sections (JLPT
-//! level for Japanese, CEFR level for Spanish), each shown as a horizontal
-//! strip of cards with a "Show All" button that expands to a full grid.
+//! level), each shown as a horizontal strip of cards with a "Show All"
+//! button that expands to a full grid.
 
 pub mod dialog;
 pub mod lookup;

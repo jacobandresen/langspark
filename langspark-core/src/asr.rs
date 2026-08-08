@@ -21,8 +21,8 @@ pub struct TranscriptionResult {
     pub language: String,
 }
 
-/// Handles speech recognition using qwen3_asr_rs (Japanese and Spanish, among
-/// 30+ languages the model supports).
+/// Handles speech recognition using qwen3_asr_rs (Japanese, among 30+
+/// languages the model supports).
 pub struct SpeechRecognizer {
     language: String,
     #[cfg(feature = "asr")]
@@ -105,9 +105,9 @@ mod asr_feature_tests {
     }
 }
 
-/// Normalize recognized/expected text for comparison, per language script.
-/// Japanese: strip whitespace so kana output with/without spaces still matches.
-/// Spanish: lowercase and fold accents (handled by `pronunciation::normalize_text`).
+/// Normalize recognized/expected text for comparison: strips whitespace so
+/// kana output with/without spaces still matches (handled by
+/// `pronunciation::normalize_text`).
 pub fn normalize_for_recognition(text: &str, language: &str) -> String {
     crate::pronunciation::normalize_text(text, language)
 }
@@ -128,7 +128,6 @@ mod tests {
 
     #[test]
     fn test_normalize_for_recognition() {
-        assert_eq!(normalize_for_recognition("Recibí", "es"), "recibi");
         assert_eq!(normalize_for_recognition("うけとる ", "ja"), "うけとる");
     }
 }

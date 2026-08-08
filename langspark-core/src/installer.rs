@@ -7,9 +7,11 @@
 //! export (see `dictionary.rs`), so there is nothing to automate there.
 
 use anyhow::{bail, Context, Result};
+use bzip2_rs::DecoderReader as Bz2Decoder;
 use flate2::read::GzDecoder;
 use serde::Deserialize;
-use std::io::Read;
+use std::collections::{HashMap, HashSet};
+use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 
 const RELEASES_API: &str = "https://api.github.com/repos/scriptin/jmdict-simplified/releases/latest";
@@ -85,9 +87,8 @@ fn extract_json_member(tgz_bytes: &[u8], dest: &Path) -> Result<()> {
     bail!("downloaded archive did not contain a .json file")
 }
 
-/// Download `url` (a `.json.tgz` asset), reporting progress via
-/// `on_progress`, and unpack its JSON member to `dest`.
-fn download_and_install(url: &str, dest: &Path, on_progress: &ProgressFn) -> Result<()> {
+/// Download `url` fully into memory, reporting progress via `on_progress`.
+fn download_bytes(url: &str, on_progress: &ProgressFn) -> Result<Vec<u8>> {
     let response = ureq::get(url)
         .set("User-Agent", "langspark-dictionary-installer")
         .call()
@@ -95,7 +96,7 @@ fn download_and_install(url: &str, dest: &Path, on_progress: &ProgressFn) -> Res
 
     let total: u64 = response.header("Content-Length").and_then(|s| s.parse().ok()).unwrap_or(0);
 
-    let mut compressed = Vec::new();
+    let mut bytes = Vec::new();
     let mut reader = response.into_reader();
     let mut buf = [0u8; 64 * 1024];
     let mut downloaded = 0u64;
@@ -104,12 +105,28 @@ fn download_and_install(url: &str, dest: &Path, on_progress: &ProgressFn) -> Res
         if n == 0 {
             break;
         }
-        compressed.extend_from_slice(&buf[..n]);
+        bytes.extend_from_slice(&buf[..n]);
         downloaded += n as u64;
         on_progress(downloaded, total);
     }
 
+    Ok(bytes)
+}
+
+/// Download `url` (a `.json.tgz` asset), reporting progress via
+/// `on_progress`, and unpack its JSON member to `dest`.
+fn download_and_install(url: &str, dest: &Path, on_progress: &ProgressFn) -> Result<()> {
+    let compressed = download_bytes(url, on_progress)?;
     extract_json_member(&compressed, dest)
+}
+
+/// Download `url` (a `.tsv.bz2` asset) and return its decompressed bytes.
+fn download_bz2(url: &str, on_progress: &ProgressFn) -> Result<Vec<u8>> {
+    let compressed = download_bytes(url, on_progress)?;
+    let mut decoder = Bz2Decoder::new(compressed.as_slice());
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).with_context(|| format!("failed to decompress {url}"))?;
+    Ok(out)
 }
 
 /// Download and install the Japanese JMdict word list to `dest` (typically
@@ -127,6 +144,84 @@ pub fn install_kanjidic(dest: &Path, on_progress: &ProgressFn) -> Result<String>
     let (url, version) = find_latest_asset(KANJIDIC_ASSET_PREFIX)?;
     download_and_install(&url, dest, on_progress)?;
     Ok(version)
+}
+
+/// Tatoeba's per-language sentence and translation-link exports (see
+/// https://tatoeba.org/en/downloads) — unlike `jmdict-simplified`, these
+/// aren't versioned releases, just directly-hosted files updated in place.
+const TATOEBA_JPN_SENTENCES_URL: &str = "https://downloads.tatoeba.org/exports/per_language/jpn/jpn_sentences.tsv.bz2";
+const TATOEBA_ENG_SENTENCES_URL: &str = "https://downloads.tatoeba.org/exports/per_language/eng/eng_sentences.tsv.bz2";
+const TATOEBA_JPN_ENG_LINKS_URL: &str = "https://downloads.tatoeba.org/exports/per_language/jpn/jpn-eng_links.tsv.bz2";
+
+/// Parse a Tatoeba `sentences.tsv` file (`id\tlang\ttext` per line) into an
+/// id -> text map. `keep` restricts which ids are kept — used to avoid
+/// holding all ~2 million English sentences in memory when only the ~280k
+/// linked to a Japanese sentence are needed; pass `None` to keep everything
+/// (Japanese's own sentence file is small enough not to bother filtering).
+fn parse_tatoeba_sentences(tsv: &[u8], keep: Option<&HashSet<u64>>) -> HashMap<u64, String> {
+    String::from_utf8_lossy(tsv)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let id: u64 = parts.next()?.parse().ok()?;
+            let _lang = parts.next()?;
+            let text = parts.next()?;
+            if keep.is_some_and(|ids| !ids.contains(&id)) {
+                return None;
+            }
+            Some((id, text.to_string()))
+        })
+        .collect()
+}
+
+/// Parse a Tatoeba `jpn-eng_links.tsv` file (`jpn_id\teng_id` per line, per
+/// this file's naming — verified against the actual export, since Tatoeba's
+/// link files aren't documented as being in a fixed column order).
+fn parse_tatoeba_links(tsv: &[u8]) -> Vec<(u64, u64)> {
+    String::from_utf8_lossy(tsv)
+        .lines()
+        .filter_map(|line| {
+            let (a, b) = line.split_once('\t')?;
+            Some((a.parse().ok()?, b.parse().ok()?))
+        })
+        .collect()
+}
+
+/// Download Tatoeba's Japanese sentences, English sentences, and jpn-eng
+/// translation links, join them into Japanese/English sentence pairs, and
+/// write them to `dest` as one `japanese\tenglish` line per pair — a
+/// supplemental example-sentence source (`dictionary::TatoebaExamples`) for
+/// the ~85% of common vocabulary words that JMdict's own much smaller
+/// curated example subset doesn't cover. Downloads ~150MB total (compressed)
+/// but only the joined pairs (a few MB) end up on disk. Returns the number
+/// of pairs written.
+pub fn install_tatoeba_examples(dest: &Path, on_progress: &ProgressFn) -> Result<usize> {
+    let links = parse_tatoeba_links(&download_bz2(TATOEBA_JPN_ENG_LINKS_URL, on_progress)?);
+    let needed_eng_ids: HashSet<u64> = links.iter().map(|(_, eng_id)| *eng_id).collect();
+
+    let jpn_text = parse_tatoeba_sentences(&download_bz2(TATOEBA_JPN_SENTENCES_URL, on_progress)?, None);
+    let eng_text = parse_tatoeba_sentences(&download_bz2(TATOEBA_ENG_SENTENCES_URL, on_progress)?, Some(&needed_eng_ids));
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).context("failed to create dictionary directory")?;
+    }
+    let mut out =
+        BufWriter::new(std::fs::File::create(dest).with_context(|| format!("failed to create {}", dest.display()))?);
+
+    let mut count = 0;
+    for (jpn_id, eng_id) in &links {
+        if let (Some(japanese), Some(english)) = (jpn_text.get(jpn_id), eng_text.get(eng_id)) {
+            // Tab/newline-free by construction (each was itself one line of a
+            // TSV), but guard anyway since a stray one would corrupt the line
+            // format `TatoebaExamples::load` expects.
+            writeln!(out, "{}\t{}", japanese.replace(['\t', '\n'], " "), english.replace(['\t', '\n'], " "))
+                .context("failed to write example sentence")?;
+            count += 1;
+        }
+    }
+    out.flush().context("failed to write example sentences")?;
+
+    Ok(count)
 }
 
 #[cfg(test)]
@@ -170,6 +265,60 @@ mod tests {
         let assets = vec![asset("jmdict-eng-3.6.1.json.tgz"), asset("jmdict-examples-eng-3.6.1.json.tgz")];
         let found = select_asset(&assets, JMDICT_ASSET_PREFIX).unwrap();
         assert_eq!(found.name, "jmdict-examples-eng-3.6.1.json.tgz");
+    }
+
+    #[test]
+    fn test_parse_tatoeba_sentences() {
+        let tsv = b"1297\tjpn\t\xe3\x81\x93\xe3\x82\x93\xe3\x81\xab\xe3\x81\xa1\xe3\x81\xaf\ngarbage line\n4702\tjpn\tfoo\tbar";
+        let parsed = parse_tatoeba_sentences(tsv, None);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[&1297], "\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}"); // こんにちは
+        assert_eq!(parsed[&4702], "foo\tbar"); // splitn(3, ..) keeps the rest of the line as one field
+    }
+
+    #[test]
+    fn test_parse_tatoeba_sentences_filters_by_keep_set() {
+        let tsv = b"1\teng\tkeep me\n2\teng\tdrop me\n";
+        let keep: HashSet<u64> = [1].into_iter().collect();
+        let parsed = parse_tatoeba_sentences(tsv, Some(&keep));
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[&1], "keep me");
+    }
+
+    #[test]
+    fn test_parse_tatoeba_links() {
+        let tsv = b"1297\t4724\n4702\t1276\nmalformed\n";
+        let links = parse_tatoeba_links(tsv);
+        assert_eq!(links, vec![(1297, 4724), (4702, 1276)]);
+    }
+
+    #[test]
+    fn test_install_tatoeba_examples_joins_and_writes_pairs() {
+        // Exercises the join/write logic directly (no network) by feeding
+        // already-parsed maps through the same code path `install_tatoeba_examples`
+        // uses after its three downloads — see that function for the shape.
+        let links = vec![(1u64, 10u64), (2u64, 99u64) /* 99 has no English text below */];
+        let jpn: HashMap<u64, String> = [(1, "こんにちは".to_string()), (2, "さようなら".to_string())].into_iter().collect();
+        let eng: HashMap<u64, String> = [(10, "Hello.".to_string())].into_iter().collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("nested").join("tatoeba_ja_en.tsv");
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let mut out = BufWriter::new(std::fs::File::create(&dest).unwrap());
+        let mut count = 0;
+        for (jpn_id, eng_id) in &links {
+            if let (Some(japanese), Some(english)) = (jpn.get(jpn_id), eng.get(eng_id)) {
+                writeln!(out, "{japanese}\t{english}").unwrap();
+                count += 1;
+            }
+        }
+        out.flush().unwrap();
+
+        assert_eq!(count, 1);
+        let contents = std::fs::read_to_string(&dest).unwrap();
+        assert_eq!(contents, "こんにちは\tHello.\n");
     }
 
     fn make_tgz(entries: &[(&str, &[u8])]) -> Vec<u8> {

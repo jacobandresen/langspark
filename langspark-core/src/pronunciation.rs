@@ -78,11 +78,9 @@ pub fn levenshtein_distance(a: &str, b: &str) -> usize {
     prev[n]
 }
 
-/// Normalize text for comparison, per language.
-///
-/// Japanese: strips whitespace (kana width/variant normalization is left to
-/// callers, since it needs a lookup table beyond simple char mapping).
-/// Spanish: lowercases and folds accented vowels/ñ to their plain form.
+/// Normalize text for comparison: strips whitespace and lowercases (kana
+/// width/variant normalization is left to callers, since it needs a lookup
+/// table beyond simple char mapping).
 pub fn normalize_text(text: &str, language: &str) -> String {
     crate::dictionary::normalize_for_language(text, language)
 }
@@ -102,6 +100,67 @@ pub fn score_pronunciation(recognized: &str, expected: &str, language: &str) -> 
     };
 
     PronunciationResult::new(score, recognized.to_string(), expected.to_string(), language)
+}
+
+/// How a single expected/recognized character relates to the other string,
+/// from a character-level alignment of the two — see [`diff_chars`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffOp {
+    /// Present, unchanged, in both strings.
+    Match,
+    /// Present in both strings but differs (a substitution).
+    Substitute,
+    /// Present in `expected` but missing from `recognized`.
+    Missing,
+}
+
+/// Character-level alignment between `recognized` and `expected`, classifying
+/// every character of `expected` as [`DiffOp::Match`], [`DiffOp::Substitute`],
+/// or [`DiffOp::Missing`], so a caller (e.g. the pronunciation UI) can
+/// highlight exactly which part of the expected word was or wasn't heard,
+/// rather than just showing a bare percentage. Alignment is the standard
+/// Levenshtein edit-distance DP with a backtrace, operating on `char`s (not
+/// bytes) so kana/kanji count as single units, same as
+/// [`levenshtein_distance`].
+pub fn diff_chars(recognized: &str, expected: &str) -> Vec<(char, DiffOp)> {
+    let recognized: Vec<char> = recognized.chars().collect();
+    let expected: Vec<char> = expected.chars().collect();
+    let (m, n) = (recognized.len(), expected.len());
+
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for (i, row) in dp.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for j in 0..=n {
+        dp[0][j] = j;
+    }
+    for i in 1..=m {
+        for j in 1..=n {
+            let cost = if recognized[i - 1] == expected[j - 1] { 0 } else { 1 };
+            dp[i][j] = (dp[i - 1][j] + 1).min(dp[i][j - 1] + 1).min(dp[i - 1][j - 1] + cost);
+        }
+    }
+
+    let mut ops = Vec::with_capacity(n);
+    let (mut i, mut j) = (m, n);
+    while j > 0 {
+        if i > 0 && dp[i][j] == dp[i - 1][j - 1] + if recognized[i - 1] == expected[j - 1] { 0 } else { 1 } {
+            let op = if recognized[i - 1] == expected[j - 1] { DiffOp::Match } else { DiffOp::Substitute };
+            ops.push((expected[j - 1], op));
+            i -= 1;
+            j -= 1;
+        } else if i > 0 && dp[i][j] == dp[i - 1][j] + 1 {
+            // An extra recognized character with no counterpart in expected —
+            // doesn't map to any expected char, so it's dropped from this
+            // per-expected-character view.
+            i -= 1;
+        } else {
+            ops.push((expected[j - 1], DiffOp::Missing));
+            j -= 1;
+        }
+    }
+    ops.reverse();
+    ops
 }
 
 /// Scores pronunciation by comparing recognized speech to expected text.
@@ -141,60 +200,12 @@ pub fn segment_japanese_morae(kana: &str) -> Vec<String> {
     morae
 }
 
-/// Split Spanish text into rough syllables using a vowel-group heuristic
-/// (each maximal run of vowels, plus any following consonants up to the next
-/// vowel run, is one syllable). This is a simplification of real Spanish
-/// syllabification (it doesn't handle diphthong/hiatus distinctions) good
-/// enough for approximate phoneme-level comparison in Tier 2.
-pub fn segment_spanish_syllables(word: &str) -> Vec<String> {
-    fn is_vowel(c: char) -> bool {
-        matches!(c.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u' | 'á' | 'é' | 'í' | 'ó' | 'ú' | 'ü')
-    }
-
-    let chars: Vec<char> = word.chars().collect();
-    if chars.is_empty() {
-        return Vec::new();
-    }
-
-    let mut syllables = Vec::new();
-    let mut current = String::new();
-    let mut seen_vowel_in_current = false;
-
-    for (i, &c) in chars.iter().enumerate() {
-        current.push(c);
-        if is_vowel(c) {
-            seen_vowel_in_current = true;
-        }
-        let next_is_vowel = chars.get(i + 1).copied().map(is_vowel).unwrap_or(false);
-        // Break after a vowel when the next char starts a new vowel group
-        // (i.e. we're between a consonant-vowel unit and the next one).
-        if seen_vowel_in_current && next_is_vowel && !is_vowel(c) {
-            syllables.push(std::mem::take(&mut current));
-            seen_vowel_in_current = false;
-        } else if seen_vowel_in_current && is_vowel(c) && next_is_vowel {
-            // consecutive vowels stay together as one syllable nucleus (approximation)
-        } else if seen_vowel_in_current
-            && !next_is_vowel
-            && chars.get(i + 1).is_some()
-            && chars.get(i + 2).copied().map(is_vowel).unwrap_or(false)
-        {
-            syllables.push(std::mem::take(&mut current));
-            seen_vowel_in_current = false;
-        }
-    }
-    if !current.is_empty() {
-        syllables.push(current);
-    }
-    syllables
-}
-
-/// Segment text into its phoneme-adjacent units for the active language:
-/// morae for Japanese, approximate syllables for Spanish/other.
-pub fn segment_units(text: &str, language: &str) -> Vec<String> {
-    match language {
-        "ja" => segment_japanese_morae(text),
-        _ => segment_spanish_syllables(text),
-    }
+/// Segment text into its phoneme-adjacent units (morae) for Tier 2 scoring.
+/// `language` is currently always "ja" — kept as a parameter for consistency
+/// with `normalize_text`/`score_pronunciation`, and since other languages may
+/// be added later.
+pub fn segment_units(text: &str, _language: &str) -> Vec<String> {
+    segment_japanese_morae(text)
 }
 
 /// Edit distance over a sequence of string units (morae/syllables) rather
@@ -259,17 +270,35 @@ mod tests {
     }
 
     #[test]
+    fn test_diff_chars_exact_match() {
+        let ops = diff_chars("うけとる", "うけとる");
+        assert!(ops.iter().all(|(_, op)| *op == DiffOp::Match));
+        assert_eq!(ops.iter().map(|(c, _)| *c).collect::<String>(), "うけとる");
+    }
+
+    #[test]
+    fn test_diff_chars_missing_suffix() {
+        // Recognizer only caught the first two morae.
+        let ops = diff_chars("うけ", "うけとる");
+        assert_eq!(ops, vec![
+            ('う', DiffOp::Match),
+            ('け', DiffOp::Match),
+            ('と', DiffOp::Missing),
+            ('る', DiffOp::Missing),
+        ]);
+    }
+
+    #[test]
+    fn test_diff_chars_substitution() {
+        let ops = diff_chars("うけとろ", "うけとる");
+        assert_eq!(ops.last(), Some(&('る', DiffOp::Substitute)));
+    }
+
+    #[test]
     fn test_score_pronunciation_exact_match() {
         let result = score_pronunciation("うけとる", "うけとる", "ja");
         assert_eq!(result.score, 100.0);
         assert!(result.is_correct);
-    }
-
-    #[test]
-    fn test_score_pronunciation_spanish_accent_insensitive() {
-        // Recognizer output often drops accents; scoring should still be forgiving.
-        let result = score_pronunciation("recibi", "recibí", "es");
-        assert_eq!(result.score, 100.0);
     }
 
     #[test]
@@ -287,16 +316,9 @@ mod tests {
     }
 
     #[test]
-    fn test_segment_spanish_syllables() {
-        assert_eq!(segment_spanish_syllables(""), Vec::<String>::new());
-        // "recibir" -> re-ci-bir
-        assert_eq!(segment_spanish_syllables("recibir"), vec!["re", "ci", "bir"]);
-    }
-
-    #[test]
     fn test_pronunciation_scorer_struct() {
-        let scorer = PronunciationScorer::new("es");
-        let result = scorer.score("comer", "comer");
+        let scorer = PronunciationScorer::new("ja");
+        let result = scorer.score("うけとる", "うけとる");
         assert!(result.is_correct);
     }
 
@@ -315,8 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn test_segment_units_dispatches_by_language() {
+    fn test_segment_units() {
         assert_eq!(segment_units("うけとる", "ja"), vec!["う", "け", "と", "る"]);
-        assert_eq!(segment_units("recibir", "es"), vec!["re", "ci", "bir"]);
     }
 }

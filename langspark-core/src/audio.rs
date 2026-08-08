@@ -89,14 +89,25 @@ pub struct AudioRecorder {
 impl AudioRecorder {
     /// Start recording from the system's default input device.
     pub fn start() -> Result<Self> {
+        Self::start_with_device(None)
+    }
+
+    /// Start recording from `device_name` (matched against
+    /// [`list_audio_devices`]'s input names), falling back to the system
+    /// default input device if `device_name` is `None` or no longer matches
+    /// any connected device (e.g. it was unplugged since being selected in
+    /// Preferences).
+    pub fn start_with_device(device_name: Option<&str>) -> Result<Self> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .context("no default audio input device available")?;
+        let device = device_name
+            .and_then(|name| host.input_devices().ok()?.find(|d| d.name().map(|n| n == name).unwrap_or(false)))
+            .or_else(|| host.default_input_device())
+            .context("no audio input device available")?;
         let config = device
             .default_input_config()
             .context("failed to get default input config")?;
         let sample_rate = config.sample_rate().0;
+        let channels = config.channels() as usize;
 
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let buffer_clone = buffer.clone();
@@ -106,7 +117,17 @@ impl AudioRecorder {
             cpal::SampleFormat::F32 => device.build_input_stream(
                 &config.into(),
                 move |data: &[f32], _| {
-                    buffer_clone.lock().unwrap().extend_from_slice(data);
+                    // `data` is interleaved per-frame (e.g. LRLRLR for a
+                    // stereo device) at `channels` samples per frame — the
+                    // rest of this module (encoding, scoring, ASR) assumes
+                    // mono, so downmix by averaging each frame's channels
+                    // rather than storing the raw interleaved stream as if
+                    // it were already mono (that would double the sample
+                    // count per second of real time and scramble L/R samples
+                    // together, making played-back audio garbled and roughly
+                    // half-speed).
+                    let mut mono = buffer_clone.lock().unwrap();
+                    mono.extend(data.chunks(channels.max(1)).map(|frame| frame.iter().sum::<f32>() / frame.len() as f32));
                 },
                 err_fn,
                 None,
@@ -249,6 +270,14 @@ impl AudioManager {
     pub fn start_recording(&self) -> Result<AudioRecorder> {
         AudioRecorder::start()
     }
+}
+
+/// Peak absolute amplitude across `samples` (0.0 for empty input). Used to
+/// give a pass/fail read on whether a microphone is actually picking up
+/// sound, e.g. for a "Test Mic" button — silence and a disconnected/muted
+/// mic both record fine but stay near 0.0.
+pub fn peak_level(samples: &[f32]) -> f32 {
+    samples.iter().fold(0.0f32, |max, &s| max.max(s.abs()))
 }
 
 /// Whether the system has usable (input device, output device) audio

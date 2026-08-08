@@ -1,9 +1,7 @@
 //! Dictionary integration module
 //!
-//! Loads and queries language-specific dictionaries. Japanese dictionaries
-//! (JMdict, Kanjidic) come from the `scriptin/jmdict-simplified` JSON export;
-//! Spanish uses a small custom JSON schema (see [`spanish`] module) since no
-//! equivalently maintained JSON export exists — see design.md "Open Questions".
+//! Loads and queries the Japanese dictionary (JMdict, Kanjidic), sourced from
+//! the `scriptin/jmdict-simplified` JSON export.
 
 use crate::repositories::KanjiEntry;
 use anyhow::{Context, Result};
@@ -22,22 +20,22 @@ pub trait Dictionary {
 pub struct VocabEntry {
     /// Dictionary-assigned entry ID
     pub id: String,
-    /// Primary written form (kanji form for Japanese, headword for Spanish)
+    /// Primary written form (kanji form)
     pub word: String,
-    /// Phonetic reading, if distinct from `word` (kana for Japanese)
+    /// Phonetic reading, if distinct from `word` (kana)
     pub reading: Option<String>,
     /// Glosses/translations
     pub meanings: Vec<String>,
     /// Parts of speech (e.g. "adj-na", "verb")
     pub part_of_speech: Vec<String>,
-    /// Proficiency level tag (JLPT level for Japanese, CEFR level for Spanish)
+    /// Proficiency level tag (JLPT level)
     pub level: Option<String>,
-    /// Language code ("ja", "es")
+    /// Language code (currently always "ja")
     pub language: String,
-    /// Example sentences using this word (Japanese only — Tatoeba-sourced,
-    /// via the `jmdict-examples-eng` dictionary asset; see `installer.rs`).
-    /// Empty for Spanish, or if this word simply has none in the source data
-    /// (most words don't — only ~13% of JMdict entries have any).
+    /// Example sentences using this word (Tatoeba-sourced, via the
+    /// `jmdict-examples-eng` dictionary asset; see `installer.rs`). Empty if
+    /// this word simply has none in the source data (most words don't —
+    /// only ~13% of JMdict entries have any).
     pub examples: Vec<ExampleSentence>,
 }
 
@@ -47,6 +45,45 @@ pub struct VocabEntry {
 pub struct ExampleSentence {
     pub japanese: String,
     pub english: String,
+}
+
+/// Supplemental example sentences from the full Tatoeba Japanese-English
+/// sentence-pair corpus (see `installer::install_tatoeba_examples`) — not
+/// just the much smaller subset JMdict links to specific dictionary entries
+/// (`jmdict-examples-eng`, ~13% of entries). Used as a fallback by
+/// `DictionaryManager::examples_for` when a word has no JMdict-linked
+/// examples, since Tatoeba's raw sentences are user-submitted with no
+/// curation, while JMdict's own subset is generally cleaner.
+pub struct TatoebaExamples {
+    pairs: Vec<ExampleSentence>,
+}
+
+impl TatoebaExamples {
+    /// Parse `japanese\tenglish` lines (one sentence pair per line), as
+    /// written by `installer::install_tatoeba_examples`. Malformed lines are
+    /// skipped rather than failing the whole load.
+    pub fn load(tsv: &str) -> Self {
+        let pairs = tsv
+            .lines()
+            .filter_map(|line| {
+                let (japanese, english) = line.split_once('\t')?;
+                Some(ExampleSentence { japanese: japanese.to_string(), english: english.to_string() })
+            })
+            .collect();
+        Self { pairs }
+    }
+
+    /// Up to `limit` sentences containing `word` as a substring, shortest
+    /// first (shorter sentences tend to be simpler and more useful to a
+    /// learner). Substring matching (rather than proper word-boundary/
+    /// morphological matching, which Japanese's lack of spaces makes
+    /// nontrivial) means this can occasionally match `word` as part of a
+    /// longer, unrelated word.
+    pub fn examples_for(&self, word: &str, limit: usize) -> Vec<ExampleSentence> {
+        let mut matches: Vec<&ExampleSentence> = self.pairs.iter().filter(|p| p.japanese.contains(word)).collect();
+        matches.sort_by_key(|p| p.japanese.chars().count());
+        matches.into_iter().take(limit).cloned().collect()
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -273,92 +310,16 @@ pub fn load_kanjidic(json: &str) -> Result<Vec<KanjiEntry>> {
 }
 
 // ---------------------------------------------------------------------
-// Spanish dictionary (custom minimal schema)
-// ---------------------------------------------------------------------
-
-pub mod spanish {
-    //! Minimal Spanish dictionary JSON schema.
-    //!
-    //! There is no `jmdict-simplified`-equivalent maintained JSON export for
-    //! Spanish, so LangSpark defines its own small schema that can be produced
-    //! from open sources (e.g. a Wiktionary extract) via an offline conversion
-    //! script. Each entry is a flat JSON object:
-    //! ```json
-    //! {"word": "recibir", "reading": "re.θi.'βiɾ", "meanings": ["to receive"], "part_of_speech": ["verb"], "cefr_level": "B1"}
-    //! ```
-    use super::VocabEntry;
-    use anyhow::{Context, Result};
-    use serde::Deserialize;
-
-    #[derive(Debug, Deserialize)]
-    struct SpanishFile {
-        entries: Vec<SpanishEntry>,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct SpanishEntry {
-        word: String,
-        #[serde(default)]
-        reading: Option<String>,
-        #[serde(default)]
-        meanings: Vec<String>,
-        #[serde(default)]
-        part_of_speech: Vec<String>,
-        #[serde(default)]
-        cefr_level: Option<String>,
-    }
-
-    /// Parse a LangSpark Spanish dictionary JSON document into vocabulary entries.
-    pub fn load_spanish_dictionary(json: &str) -> Result<Vec<VocabEntry>> {
-        let file: SpanishFile =
-            serde_json::from_str(json).context("failed to parse Spanish dictionary JSON")?;
-
-        Ok(file
-            .entries
-            .into_iter()
-            .enumerate()
-            .map(|(i, e)| VocabEntry {
-                id: i.to_string(),
-                word: e.word,
-                reading: e.reading,
-                meanings: e.meanings,
-                part_of_speech: e.part_of_speech,
-                level: e.cefr_level,
-                language: "es".to_string(),
-                examples: Vec::new(),
-            })
-            .collect())
-    }
-}
-
-// ---------------------------------------------------------------------
 // Fuzzy matching helpers (language-specific normalization)
 // ---------------------------------------------------------------------
 
-/// Normalize a query for matching against a given language's dictionary.
-///
-/// Japanese: lowercased, whitespace stripped (kana width differences are left
-/// to the caller since converting hiragana/katakana requires a lookup table).
-/// Spanish: lowercased and accented vowels folded to their plain form so
-/// "recibir" matches a query typed without accents.
-pub fn normalize_for_language(text: &str, language: &str) -> String {
-    match language {
-        "es" => text
-            .to_lowercase()
-            .chars()
-            .map(|c| match c {
-                'á' => 'a',
-                'é' => 'e',
-                'í' => 'i',
-                'ó' => 'o',
-                'ú' => 'u',
-                'ü' => 'u',
-                'ñ' => 'n',
-                other => other,
-            })
-            .collect(),
-        _ => text.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase(),
-    }
+/// Normalize a query for matching against a language's dictionary: lowercased,
+/// whitespace stripped (kana width differences are left to the caller since
+/// converting hiragana/katakana requires a lookup table). `language` is
+/// currently always "ja" — kept as a parameter since normalization is
+/// inherently per-language and other languages may be added later.
+pub fn normalize_for_language(text: &str, _language: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase()
 }
 
 // ---------------------------------------------------------------------
@@ -386,7 +347,14 @@ pub struct DictionaryVersion {
 pub struct DictionaryManager {
     entries: HashMap<String, Vec<VocabEntry>>,
     versions: HashMap<String, String>,
+    tatoeba: HashMap<String, TatoebaExamples>,
 }
+
+/// Cap on how many Tatoeba-sourced sentences `examples_for` falls back to
+/// per word, keeping the vocabulary dialog's example list from being
+/// dominated by uncurated sentences once the (usually better) JMdict-linked
+/// ones run out.
+const TATOEBA_FALLBACK_LIMIT: usize = 3;
 
 impl DictionaryManager {
     pub fn new() -> Self {
@@ -404,14 +372,10 @@ impl DictionaryManager {
         Ok(())
     }
 
-    /// Load the Spanish dictionary.
-    pub fn load_spanish(&mut self, spanish_json: &str, version: Option<&str>) -> Result<()> {
-        let entries = spanish::load_spanish_dictionary(spanish_json)?;
-        self.entries.insert("es".to_string(), entries);
-        if let Some(v) = version {
-            self.versions.insert("es".to_string(), v.to_string());
-        }
-        Ok(())
+    /// Load supplemental Tatoeba example sentences for `language` (currently
+    /// meaningful for Japanese only — see `installer::install_tatoeba_examples`).
+    pub fn load_tatoeba_examples(&mut self, language: &str, tsv: &str) {
+        self.tatoeba.insert(language.to_string(), TatoebaExamples::load(tsv));
     }
 
     /// Whether a dictionary is already loaded (and cached) for a language.
@@ -443,17 +407,31 @@ impl DictionaryManager {
             .unwrap_or_default()
     }
 
-    /// Example sentences for a word, matched by exact form (kanji or kana)
+    /// Example sentences for a word, matched by exact form (kanji or reading)
     /// against the loaded dictionary — used by the vocabulary detail dialog,
     /// which only has the saved word text (not a dictionary entry id) to
-    /// look up against. Empty if nothing is loaded for `language`, no entry
-    /// matches `word` exactly, or the matching entry(s) simply have no
-    /// examples in the source data.
+    /// look up against. Falls back to `TatoebaExamples` (if loaded — see
+    /// `load_tatoeba_examples`) when JMdict's own much smaller curated
+    /// example subset has nothing for this word, which is most words: only
+    /// ~13% of JMdict entries have any.
     pub fn examples_for(&self, language: &str, word: &str) -> Vec<ExampleSentence> {
-        self.entries
+        let from_dict: Vec<ExampleSentence> = self
+            .entries
             .get(language)
-            .map(|entries| entries.iter().filter(|e| e.word == word).flat_map(|e| e.examples.iter().cloned()).collect())
-            .unwrap_or_default()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|e| e.word == word || e.reading.as_deref() == Some(word))
+                    .flat_map(|e| e.examples.iter().cloned())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if !from_dict.is_empty() {
+            return from_dict;
+        }
+
+        self.tatoeba.get(language).map(|t| t.examples_for(word, TATOEBA_FALLBACK_LIMIT)).unwrap_or_default()
     }
 
     /// Filter entries for a language by proficiency level and/or part of speech.
@@ -543,13 +521,6 @@ mod tests {
         ]
     }"#;
 
-    const SPANISH_FIXTURE: &str = r#"{
-        "entries": [
-            {"word": "recibir", "reading": "re.θi.'βiɾ", "meanings": ["to receive"], "part_of_speech": ["verb"], "cefr_level": "B1"},
-            {"word": "comer", "meanings": ["to eat"], "part_of_speech": ["verb"], "cefr_level": "A1"}
-        ]
-    }"#;
-
     #[test]
     fn test_load_jmdict() {
         let entries = load_jmdict(JMDICT_FIXTURE).unwrap();
@@ -588,48 +559,32 @@ mod tests {
     }
 
     #[test]
-    fn test_load_spanish_dictionary() {
-        let entries = spanish::load_spanish_dictionary(SPANISH_FIXTURE).unwrap();
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].word, "recibir");
-        assert_eq!(entries[0].level, Some("B1".to_string()));
-        assert_eq!(entries[0].language, "es");
-    }
-
-    #[test]
-    fn test_normalize_for_language_spanish_accents() {
-        assert_eq!(normalize_for_language("Recibí", "es"), "recibi");
-        assert_eq!(normalize_for_language("mañana", "es"), "manana");
+    fn test_normalize_for_language_strips_whitespace_and_lowercases() {
+        assert_eq!(normalize_for_language("うけとる ", "ja"), "うけとる");
+        assert_eq!(normalize_for_language("Foo Bar", "ja"), "foobar");
     }
 
     #[test]
     fn test_dictionary_manager_search_and_filter() {
         let mut manager = DictionaryManager::new();
         manager.load_japanese(JMDICT_FIXTURE, Some("3.5.0")).unwrap();
-        manager.load_spanish(SPANISH_FIXTURE, Some("1.0")).unwrap();
 
         assert!(manager.is_loaded("ja"));
-        assert!(manager.is_loaded("es"));
-        assert!(!manager.is_loaded("fr"));
+        assert!(!manager.is_loaded("es"));
 
         let results = manager.search("ja", "うけとる");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].word, "受け取る");
 
-        // Fuzzy: searching without accent still matches "recibir"'s meaning
-        let results = manager.search("es", "receive");
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].word, "recibir");
-
         let filtered = manager.filter(
-            "es",
+            "ja",
             &VocabFilter {
-                level: Some("A1".to_string()),
-                part_of_speech: None,
+                level: None,
+                part_of_speech: Some("v1".to_string()),
             },
         );
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].word, "comer");
+        assert_eq!(filtered[0].word, "たべる");
     }
 
     #[test]
@@ -641,12 +596,50 @@ mod tests {
         assert_eq!(examples.len(), 1);
         assert_eq!(examples[0].english, "He received the present.");
 
-        // Word with no examples in the source data.
+        // Word with no examples in the source data, and no Tatoeba fallback loaded.
         assert!(manager.examples_for("ja", "たべる").is_empty());
         // No exact match.
         assert!(manager.examples_for("ja", "食べる").is_empty());
         // Nothing loaded for this language.
         assert!(manager.examples_for("es", "recibir").is_empty());
+
+        // Matches by reading too, not just the kanji/primary word form.
+        assert_eq!(manager.examples_for("ja", "うけとる").len(), 1);
+    }
+
+    #[test]
+    fn test_dictionary_manager_examples_for_falls_back_to_tatoeba() {
+        let mut manager = DictionaryManager::new();
+        manager.load_japanese(JMDICT_FIXTURE, Some("3.5.0")).unwrap();
+        manager.load_tatoeba_examples("ja", "たべるまえに、てをあらう。\tWash your hands before eating.\n");
+
+        // JMdict itself has no examples for たべる, so the Tatoeba fallback kicks in.
+        let examples = manager.examples_for("ja", "たべる");
+        assert_eq!(examples.len(), 1);
+        assert_eq!(examples[0].english, "Wash your hands before eating.");
+
+        // Words with a JMdict-linked example don't consult Tatoeba at all —
+        // 受け取る's fixture example, not anything from the Tatoeba corpus.
+        let examples = manager.examples_for("ja", "受け取る");
+        assert_eq!(examples.len(), 1);
+        assert_eq!(examples[0].english, "He received the present.");
+    }
+
+    #[test]
+    fn test_tatoeba_examples_matches_substring_shortest_first() {
+        let tatoeba = TatoebaExamples::load(
+            "食べることが好きです。\tI like eating.\n食べる。\tEat.\n関係ない文。\tUnrelated sentence.\n",
+        );
+        let matches = tatoeba.examples_for("食べる", 10);
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].english, "Eat."); // shorter sentence first
+        assert_eq!(matches[1].english, "I like eating.");
+    }
+
+    #[test]
+    fn test_tatoeba_examples_respects_limit() {
+        let tatoeba = TatoebaExamples::load("食べる。\tA.\n食べるよ。\tB.\n食べるね。\tC.\n");
+        assert_eq!(tatoeba.examples_for("食べる", 2).len(), 2);
     }
 
     #[test]

@@ -4,13 +4,11 @@
 
 use anyhow;
 
-/// Supported languages
+/// Supported languages (Japanese only, for now).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, strum::EnumString)]
 pub enum Language {
     /// Japanese
     Japanese,
-    /// Spanish
-    Spanish,
 }
 
 /// Language-specific behavior shared by every supported language.
@@ -19,7 +17,7 @@ pub enum Language {
 /// code can be written against `dyn LanguageInfo` / generic bounds instead of
 /// matching on the `Language` enum directly.
 pub trait LanguageInfo {
-    /// Get the language code (e.g., "ja" for Japanese, "es" for Spanish)
+    /// Get the language code (e.g., "ja" for Japanese)
     fn code(&self) -> &'static str;
     /// Get the display name
     fn display_name(&self) -> &'static str;
@@ -51,7 +49,7 @@ pub enum InstallationStatus {
 /// Metadata for a language including its resources and capabilities
 #[derive(Debug, Clone)]
 pub struct LanguageMetadata {
-    /// Language code (e.g., "ja", "es")
+    /// Language code (e.g., "ja")
     pub code: &'static str,
     /// Display name
     pub display_name: &'static str,
@@ -76,7 +74,7 @@ impl LanguageRegistry {
         let mut registry = Self {
             available_languages: Vec::new(),
         };
-        
+
         // Register Japanese
         registry.register_language(
             Language::Japanese,
@@ -89,20 +87,7 @@ impl LanguageRegistry {
                 default_asr_model: "qwen3_asr_rs:ja",
             }
         );
-        
-        // Register Spanish
-        registry.register_language(
-            Language::Spanish,
-            LanguageMetadata {
-                code: "es",
-                display_name: "Spanish", 
-                flag_emoji: "🇪🇸",
-                supports_kanji: false,
-                default_tts_voice: "piper:es_es",
-                default_asr_model: "qwen3_asr_rs:es",
-            }
-        );
-        
+
         registry
     }
     
@@ -243,68 +228,50 @@ mod tests {
     fn test_language_code_and_display_name() {
         assert_eq!(Language::Japanese.code(), "ja");
         assert_eq!(Language::Japanese.display_name(), "Japanese");
-        
-        assert_eq!(Language::Spanish.code(), "es");
-        assert_eq!(Language::Spanish.display_name(), "Spanish");
     }
 
     #[test]
     fn test_language_parse_display() {
-        
         assert_eq!(Language::Japanese.to_string(), "Japanese");
-        assert_eq!(Language::Spanish.to_string(), "Spanish");
     }
 
     #[test]
     fn test_language_parse_from_string() {
-        
         assert_eq!("Japanese".parse::<Language>().unwrap(), Language::Japanese);
-        assert_eq!("Japanese".parse::<Language>().unwrap(), Language::Japanese);
-        assert_eq!("Spanish".parse::<Language>().unwrap(), Language::Spanish);
+        assert!("Spanish".parse::<Language>().is_err());
     }
 
     #[test]
     fn test_language_registry_creation() {
         let registry = LanguageRegistry::new();
         let available = registry.get_available_languages();
-        
-        assert!(available.contains(&Language::Japanese));
-        assert!(available.contains(&Language::Spanish));
-        assert_eq!(available.len(), 2);
+
+        assert_eq!(available, vec![Language::Japanese]);
     }
 
     #[test]
     fn test_language_registry_metadata() {
         let registry = LanguageRegistry::new();
-        
+
         let ja_metadata = registry.get_metadata(Language::Japanese).unwrap();
         assert_eq!(ja_metadata.code, "ja");
         assert_eq!(ja_metadata.display_name, "Japanese");
         assert_eq!(ja_metadata.flag_emoji, "🇯🇵");
         assert!(ja_metadata.supports_kanji);
-        
-        let es_metadata = registry.get_metadata(Language::Spanish).unwrap();
-        assert_eq!(es_metadata.code, "es");
-        assert_eq!(es_metadata.display_name, "Spanish");
-        assert_eq!(es_metadata.flag_emoji, "🇪🇸");
-        assert!(!es_metadata.supports_kanji);
     }
 
     #[test]
     fn test_language_registry_by_code() {
         let registry = LanguageRegistry::new();
-        
+
         assert_eq!(registry.get_by_code("ja"), Some(Language::Japanese));
-        assert_eq!(registry.get_by_code("es"), Some(Language::Spanish));
         assert_eq!(registry.get_by_code("fr"), None);
     }
 
     #[test]
     fn test_language_registry_supports_kanji() {
         let registry = LanguageRegistry::new();
-        
         assert!(registry.supports_kanji(Language::Japanese));
-        assert!(!registry.supports_kanji(Language::Spanish));
     }
 
     #[test]
@@ -317,23 +284,11 @@ mod tests {
     }
 
     #[test]
-    fn test_language_manager_switching() {
-        let mut manager = LanguageManager::new(Language::Japanese);
-        assert_eq!(manager.get_active_language(), Language::Japanese);
-        
-        manager.set_active_language(Language::Spanish).unwrap();
-        assert_eq!(manager.get_active_language(), Language::Spanish);
-        assert_eq!(manager.get_active_code(), "es");
-        assert!(!manager.supports_kanji());
-    }
-
-    #[test]
     fn test_language_info_trait() {
         fn code_via_trait(l: &dyn LanguageInfo) -> &'static str {
             l.code()
         }
         assert_eq!(code_via_trait(&Language::Japanese), "ja");
-        assert_eq!(code_via_trait(&Language::Spanish), "es");
     }
 
     #[test]
@@ -351,12 +306,6 @@ mod tests {
             InstallationStatus::Installed
         );
         assert!(manager.is_active_language_installed());
-
-        // Spanish status is independent
-        assert_eq!(
-            manager.get_installation_status(Language::Spanish),
-            InstallationStatus::NotInstalled
-        );
     }
 
     #[test]
@@ -364,27 +313,21 @@ mod tests {
         let manager = LanguageManager::new(Language::Japanese);
         assert!(manager.get_tts_voice().contains("voicevox"));
         assert!(manager.get_asr_model().contains("qwen3_asr_rs:ja"));
-        
-        let manager_es = LanguageManager::new(Language::Spanish);
-        assert!(manager_es.get_tts_voice().contains("piper"));
-        assert!(manager_es.get_asr_model().contains("qwen3_asr_rs:es"));
     }
 }
 
 impl Language {
-    /// Get the language code (e.g., "ja" for Japanese, "es" for Spanish)
+    /// Get the language code (e.g., "ja" for Japanese)
     pub fn code(&self) -> &'static str {
         match self {
             Language::Japanese => "ja",
-            Language::Spanish => "es",
         }
     }
-    
+
     /// Get the display name
     pub fn display_name(&self) -> &'static str {
         match self {
             Language::Japanese => "Japanese",
-            Language::Spanish => "Spanish",
         }
     }
 }

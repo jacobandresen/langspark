@@ -6,9 +6,8 @@
 //! in Preferences at last save — switching languages takes effect on restart.
 
 use langspark_core::{
-    default_migrations, initialize_schema, run_migrations, Database, Language, LanguageManager, ReviewStats,
-    SqliteDeckRepository, SqliteKanjiRepository, SqliteReviewRepository, SqliteSrsRepository,
-    SqliteVocabularyRepository,
+    default_migrations, initialize_schema, run_migrations, Database, Language, LanguageManager,
+    SqliteKanjiRepository, SqliteSrsRepository, SqliteVocabularyRepository,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -18,8 +17,6 @@ pub struct AppState {
     pub vocabulary_repo: SqliteVocabularyRepository,
     pub kanji_repo: SqliteKanjiRepository,
     pub srs_repo: SqliteSrsRepository,
-    pub deck_repo: SqliteDeckRepository,
-    pub review_repo: SqliteReviewRepository,
     /// Dictionary for the active language, loaded from `dict_dir` (see
     /// `AppDirs::dictionaries_dir`) if a matching `<code>.json` file exists.
     /// Empty (nothing loaded) if no dictionary has been installed yet.
@@ -64,9 +61,7 @@ impl AppState {
             language_manager,
             vocabulary_repo: SqliteVocabularyRepository::new(db.clone()),
             kanji_repo: SqliteKanjiRepository::new(db.clone()),
-            srs_repo: SqliteSrsRepository::new(db.clone()),
-            deck_repo: SqliteDeckRepository::new(db.clone()),
-            review_repo: SqliteReviewRepository::new(db),
+            srs_repo: SqliteSrsRepository::new(db),
             dictionary,
         })
     }
@@ -88,25 +83,7 @@ impl AppState {
         };
         let due_cards = self.srs_repo.get_due_cards(language)?;
 
-        let history = self.review_repo.get_by_language(language)?;
-        let ratings: Vec<u32> = history.iter().map(|r| r.rating).collect();
-        let review_dates: Vec<String> = history
-            .iter()
-            .filter_map(|r| r.reviewed_at.as_ref())
-            .map(|dt| dt.split(' ').next().unwrap_or(dt).to_string())
-            .collect();
-        let stats = langspark_core::build_review_stats(&ratings, &review_dates);
-
-        let decks = self.deck_repo.get_by_language(language)?;
-        let deck_stats: Vec<_> = decks
-            .into_iter()
-            .map(|deck| {
-                let card_ids = self.deck_repo.card_ids(deck.id.unwrap_or(0)).unwrap_or_default();
-                crate::statistics::compute_deck_stats(deck, &card_ids, &due_cards)
-            })
-            .collect();
-
-        Ok(TabData { vocabulary, kanji, due_cards, stats, deck_stats })
+        Ok(TabData { vocabulary, kanji, due_cards })
     }
 }
 
@@ -121,12 +98,20 @@ fn load_dictionary(dict_dir: Option<&Path>, language_code: &str) -> langspark_co
 
     let result = match language_code {
         "ja" => manager.load_japanese(&json, None),
-        "es" => manager.load_spanish(&json, None),
         _ => Ok(()),
     };
     if let Err(e) = result {
         log::warn!("failed to parse dictionary at {}: {e}", path.display());
     }
+
+    // Supplemental Tatoeba example sentences (see `installer::install_tatoeba_examples`),
+    // for the many words JMdict's own much smaller curated example subset
+    // doesn't cover. Optional — silently absent until installed from Preferences.
+    let tatoeba_path = dir.join(format!("tatoeba_{language_code}.tsv"));
+    if let Ok(tsv) = std::fs::read_to_string(&tatoeba_path) {
+        manager.load_tatoeba_examples(language_code, &tsv);
+    }
+
     manager
 }
 
@@ -135,8 +120,6 @@ pub struct TabData {
     pub vocabulary: Vec<langspark_core::VocabularyEntry>,
     pub kanji: Vec<langspark_core::KanjiEntry>,
     pub due_cards: Vec<langspark_core::SrsCard>,
-    pub stats: ReviewStats,
-    pub deck_stats: Vec<crate::statistics::DeckStats>,
 }
 
 #[cfg(test)]
@@ -159,7 +142,6 @@ mod tests {
         assert_eq!(data.vocabulary.len(), expected);
         assert_eq!(data.due_cards.len(), expected);
         assert!(data.kanji.is_empty());
-        assert_eq!(data.stats.total_reviews, 0);
         assert!(!state.dictionary.is_loaded("ja"));
 
         // Re-opening the same database must not seed a second time.
@@ -169,26 +151,10 @@ mod tests {
     }
 
     #[test]
-    fn test_open_creates_database_with_empty_tab_data_for_spanish() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("nested").join("langspark.db");
-
-        let state = AppState::open(&db_path, Language::Spanish, None).unwrap();
-        assert!(db_path.exists());
-
-        // Spanish has no seed vocabulary (the school list is Japanese-only).
-        let data = state.load_tab_data().unwrap();
-        assert!(data.vocabulary.is_empty());
-        assert!(data.kanji.is_empty());
-        assert!(data.due_cards.is_empty());
-        assert_eq!(data.stats.total_reviews, 0);
-    }
-
-    #[test]
     fn test_open_respects_kanji_support() {
         let dir = tempfile::tempdir().unwrap();
-        let state = AppState::open(&dir.path().join("langspark.db"), Language::Spanish, None).unwrap();
-        assert!(!state.language_manager.supports_kanji());
+        let state = AppState::open(&dir.path().join("langspark.db"), Language::Japanese, None).unwrap();
+        assert!(state.language_manager.supports_kanji());
     }
 
     #[test]

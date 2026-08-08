@@ -26,9 +26,8 @@ pub struct VocabularyDialogCallbacks {
 }
 
 /// Build a vocabulary detail dialog for `entry`, showing `examples` (empty
-/// if none are available — most words don't have any, and Spanish never
-/// does, see `ExampleSentence`). Caller is responsible for calling
-/// `.present(Some(parent))` on the returned dialog.
+/// if none are available — see `ExampleSentence`). Caller is responsible for
+/// calling `.present(Some(parent))` on the returned dialog.
 pub fn build(entry: &VocabularyEntry, examples: &[ExampleSentence], callbacks: VocabularyDialogCallbacks) -> adw::Dialog {
     let root = GtkBox::new(Orientation::Vertical, 12);
     root.set_margin_top(16);
@@ -39,9 +38,9 @@ pub fn build(entry: &VocabularyEntry, examples: &[ExampleSentence], callbacks: V
     let word = Label::builder().label(&entry.word).css_classes(["title-1"]).build();
     root.append(&word);
 
-    // Phonetic guide: furigana for Japanese would render above the kanji in a
-    // real implementation; without a furigana-capable widget we show the
-    // reading beneath the word, which also serves Spanish's phonetic guide.
+    // Phonetic guide: furigana would render above the kanji in a real
+    // implementation; without a furigana-capable widget we show the reading
+    // beneath the word instead.
     if let Some(reading) = &entry.reading {
         root.append(&Label::builder().label(reading).css_classes(["title-4", "dim-label"]).build());
     }
