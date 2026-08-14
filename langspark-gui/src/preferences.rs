@@ -64,6 +64,21 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
     dict_group.add(&dict_row);
     general_page.add(&dict_group);
 
+    let books_group = adw::PreferencesGroup::builder().title("Books Data").build();
+    let books_row = adw::ActionRow::builder()
+        .title("Data location")
+        .subtitle(
+            settings
+                .borrow()
+                .books_data_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "Default".to_string()),
+        )
+        .build();
+    books_group.add(&books_row);
+    general_page.add(&books_group);
+
     dialog.add(&general_page);
 
     // --- Audio page: TTS voices, audio devices, cache ---
@@ -281,6 +296,39 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
                 Ok(format!("{message} — restart LangSpark for the Pronunciation tab to appear"))
             },
         ));
+
+        // Book catalog (see app.rs's `load_installed_book_catalog`, which
+        // gates whether the Books tab shows at all). Only the catalog
+        // metadata is fetched here — a book's own text is downloaded lazily
+        // the first time it's opened (see `langspark_core::fetch_book`).
+        let books_dir = settings.borrow().books_data_dir.clone().or_else(|| crate::config::AppDirs::new().map(|d| d.books_dir()));
+        let already_installed = books_dir.as_ref().is_some_and(|d| d.join("catalog.json").exists());
+        install_group.add(&build_install_row(
+            "Book catalog (Aozora Bunko)",
+            already_installed,
+            "Not installed",
+            move || {
+                let dir = books_dir.clone().context("couldn't determine the books directory")?;
+                let count = langspark_core::install_aozora_catalog(&dir.join("catalog.json"), &|_, _| {})?;
+                Ok(format!("Installed ({count} books) — restart LangSpark for the Books tab to appear"))
+            },
+        ));
+
+        // Paragraph translation model (see app.rs's `translate_paragraph_callback`,
+        // which reports "not installed" through the paragraph popup until
+        // this is installed — no restart needed, unlike the rows above,
+        // since the model loads lazily on first use rather than at startup).
+        let translation_dir = crate::config::AppDirs::new().map(|d| d.translation_model_dir());
+        let already_installed = translation_dir.as_ref().is_some_and(|d| d.join("model.safetensors").exists());
+        install_group.add(&build_install_row(
+            "Paragraph translation (Helsinki-NLP OPUS-MT ja\u{2192}en)",
+            already_installed,
+            "Not installed (~300MB download, needs python3 on PATH)",
+            move || {
+                let dir = translation_dir.clone().context("couldn't determine the translation model directory")?;
+                langspark_core::install_translation_model(&dir, &|_, _| {})
+            },
+        ));
     }
     study_page.add(&install_group);
 
@@ -295,14 +343,25 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
         .dictionary_data_dir
         .clone()
         .or_else(|| crate::config::AppDirs::new().map(|d| d.dictionaries_dir()));
+    let books_dir_display = settings
+        .borrow()
+        .books_data_dir
+        .clone()
+        .or_else(|| crate::config::AppDirs::new().map(|d| d.books_dir()));
     let location_group = adw::PreferencesGroup::builder()
         .title("Downloaded To")
         .description("Installed via Study \u{2192} Language Installation")
         .build();
     location_group.add(
         &adw::ActionRow::builder()
-            .title("Data directory")
+            .title("Dictionary data directory")
             .subtitle(dict_dir.map(|p| p.display().to_string()).unwrap_or_else(|| "Unknown".to_string()))
+            .build(),
+    );
+    location_group.add(
+        &adw::ActionRow::builder()
+            .title("Books data directory")
+            .subtitle(books_dir_display.map(|p| p.display().to_string()).unwrap_or_else(|| "Unknown".to_string()))
             .build(),
     );
     data_page.add(&location_group);
@@ -333,6 +392,29 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
         "https://tatoeba.org/en/downloads",
     ));
     data_page.add(&dict_sources_group);
+
+    let books_group = adw::PreferencesGroup::builder().title("Reading Material").build();
+    books_group.add(&build_data_source_row(
+        "Aozora Bunko (青空文庫) book catalog",
+        "Public-domain and author-permitted Japanese classic literature: full text plus \
+         author/genre metadata for every work. Each book's text is downloaded the first time \
+         it's opened from the Books tab, then cached locally.",
+        "Aozora Bunko (aozora.gr.jp), via the aozorabunko/aozorabunko GitHub mirror",
+        "Public domain / author-permitted — see each work's own colophon",
+        "https://www.aozora.gr.jp/index_pages/aozora_manual.html",
+    ));
+    books_group.add(&build_data_source_row(
+        "Paragraph translation model (OPUS-MT ja\u{2192}en, installable above)",
+        "Installing converts the model's weights to a format this app's translation engine \
+         (candle) can load, needing a throwaway Python + PyTorch environment for that one-time \
+         step only. Translating itself runs fully offline afterward via candle (no libtorch, \
+         unlike the speech recognition model below — deliberately, to avoid a conflicting \
+         second libtorch version) — no text ever leaves this device to be translated.",
+        "Language Technology Research Group at the University of Helsinki, via huggingface.co/Helsinki-NLP",
+        "CC BY 4.0",
+        "https://github.com/Helsinki-NLP/Opus-MT",
+    ));
+    data_page.add(&books_group);
 
     let voice_group = adw::PreferencesGroup::builder().title("Speech").build();
     voice_group.add(&build_data_source_row(

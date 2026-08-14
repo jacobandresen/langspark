@@ -42,8 +42,8 @@ and `app::build_main_window`'s `on_review` callback for the concrete example.
 shared with the background thread pool; `Arc<T>` is only `Send` if
 `T: Send + Sync`. `Database` wraps its `Connection` in a `Mutex` specifically
 so this holds — without it, no repository could be used from
-`task::run_blocking` at all (this was a real bug caught while wiring
-section 24's integration, not a hypothetical).
+`task::run_blocking` at all (this was a real bug caught during development,
+not a hypothetical).
 
 ## Language-awareness
 
@@ -57,14 +57,14 @@ as a parameter — there's no global "current language" state inside
 Real-time language switching mid-session is an explicit non-goal: switching
 in Preferences takes effect on the next launch, not live.
 
-## TTS/ASR backend choices (and why they're not what the original proposal said)
+## TTS/ASR backend choices
 
-- **Japanese TTS**: the proposal called for the `voicevox_core` crate, which
-  isn't published to crates.io, and the one alternative (`voicevox-rs`) fails
-  to compile due to an upstream bug. `tts::VoicevoxTts` instead speaks
-  directly to a locally-running [VOICEVOX Engine](https://voicevox.hiroshiba.jp/)
-  over its HTTP API with `ureq` — functionally equivalent for an offline-first
-  app, since VOICEVOX Engine is the thing distributing the actual voice models.
+- **Japanese TTS**: `voicevox_core` isn't published to crates.io, and the one
+  alternative (`voicevox-rs`) fails to compile due to an upstream bug.
+  `tts::VoicevoxTts` instead speaks directly to a locally-running
+  [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) over its HTTP API with
+  `ureq` — functionally equivalent for an offline-first app, since VOICEVOX
+  Engine is the thing distributing the actual voice models.
 - **ASR** (`qwen3_asr_rs`): real, but its only backends need either a system
   libtorch install (`tch`) or Apple Silicon (`mlx`). It's an optional Cargo
   feature (`asr`) on `langspark-core` so the default build never needs

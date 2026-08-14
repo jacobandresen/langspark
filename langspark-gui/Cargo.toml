@@ -13,6 +13,9 @@ adw = { version = "0.9.2", package = "libadwaita", features = ["v1_5", "gtk_v4_1
 gdk4 = "0.11.4"
 glib = "0.22.8"
 gio = "0.22.8"
+# Draws Pango text layouts (the book reader's furigana rendering, see
+# books/reader.rs) onto a Cairo DrawingArea context.
+pangocairo = "0.22"
 
 # Core logic (default-features = false so this crate's own `asr` feature is
 # the single place that toggles it, rather than getting it implicitly via

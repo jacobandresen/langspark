@@ -4,7 +4,7 @@
 
 use crate::config::Settings;
 use crate::state::AppState;
-use crate::{diagnostics, pronunciation, review, vocabulary};
+use crate::{books, diagnostics, pronunciation, review, vocabulary};
 use adw::prelude::*;
 use adw::{
     Application as AdwApplication, ApplicationWindow as AdwApplicationWindow, HeaderBar, ToastOverlay, ToolbarView,
@@ -15,7 +15,7 @@ use gtk4::Box as GtkBox;
 use langspark_core::{Language, TtsBackend};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Main application window and its toast overlay (for `diagnostics::show_error_toast`).
 ///
@@ -60,22 +60,15 @@ pub fn build_main_window(
     let view_stack = ViewStack::new();
     view_stack.set_vexpand(true);
 
-    let vocab_widget = vocabulary::build_tab(
-        &tab_data.vocabulary,
-        vocabulary::VocabTabCallbacks {
-            add_word: dictionary_add_word_callbacks(&state, active_language, &settings, &toast_overlay),
-            on_play: vocab_play_callback(active_language, &settings.borrow(), &toast_overlay),
-            delete: vocab_delete_callback(&state, &toast_overlay),
-            example_lookup: example_lookup_callback(&state, active_language),
-        },
-    );
-    let vocab_page = view_stack.add_titled(&vocab_widget, Some("vocabulary"), "Vocabulary");
-    vocab_page.set_icon_name(Some("accessories-dictionary-symbolic"));
-
+    // `review_session` is *built* before the Vocabulary tab (which it would
+    // otherwise seem to follow, view-switcher-order-wise) because
+    // `dictionary_add_word_callbacks` needs `review_session.append` — a
+    // newly-added word's immediately-due `SrsCard` (see
+    // `build_persist_callback`) should show up in the Review queue live, the
+    // same way `vocab_tab.append` makes it show up in the Vocabulary tab
+    // live. Its `add_titled` call is deferred below, after Vocabulary's, so
+    // this dependency doesn't also reorder the view switcher itself.
     let review_items = review::build_items_from_cards(&tab_data.due_cards, &tab_data.vocabulary, &tab_data.kanji);
-    // Captured alongside the queue so `on_review`'s index can be mapped back
-    // to the database row id `SqliteSrsRepository::update_after_review` needs.
-    let review_card_ids: Vec<Option<i64>> = review_items.iter().map(|item| item.card.id).collect();
     let review_play_callback = vocab_play_callback(active_language, &settings.borrow(), &toast_overlay);
     let review_session = review::ReviewSession::new(
         review_items,
@@ -86,10 +79,7 @@ pub fn build_main_window(
             settings,
             #[weak]
             toast_overlay,
-            move |index, rating| {
-                let Some(Some(card_id)) = review_card_ids.get(index).copied() else {
-                    return;
-                };
+            move |card_id, rating| {
                 let algorithm = settings.borrow().srs_algorithm.clone();
                 let state = state.clone();
                 crate::task::spawn_on_main(async move {
@@ -105,6 +95,25 @@ pub fn build_main_window(
         ),
         review_play_callback,
     );
+
+    let vocab_tab = vocabulary::build_tab(
+        &tab_data.vocabulary,
+        vocabulary::VocabTabCallbacks {
+            add_word: dictionary_add_word_callbacks(
+                &state,
+                active_language,
+                &settings,
+                &toast_overlay,
+                &review_session.append,
+            ),
+            on_play: vocab_play_callback(active_language, &settings.borrow(), &toast_overlay),
+            delete: vocab_delete_callback(&state, &toast_overlay),
+            example_lookup: example_lookup_callback(&state, active_language),
+        },
+    );
+    let vocab_page = view_stack.add_titled(&vocab_tab.widget, Some("vocabulary"), "Vocabulary");
+    vocab_page.set_icon_name(Some("accessories-dictionary-symbolic"));
+
     let review_page = view_stack.add_titled(&review_session.root, Some("review"), "Review");
     review_page.set_icon_name(Some("view-refresh-symbolic"));
 
@@ -123,13 +132,19 @@ pub fn build_main_window(
         pronunciation_page.set_icon_name(Some("audio-input-microphone-symbolic"));
     }
 
-    // Header: view switcher as the title, language indicator, app menu
-    let switcher_title = ViewSwitcherTitle::builder().stack(&view_stack).title("LangSpark").build();
+    if let Some(callbacks) =
+        books_tab_callbacks(&state, active_language, &settings, &toast_overlay, &vocab_tab.append, &review_session.append)
+    {
+        let catalog = load_installed_book_catalog(&settings.borrow());
+        if !catalog.is_empty() {
+            let books_widget = books::build_tab(&catalog, callbacks);
+            let books_page = view_stack.add_titled(&books_widget, Some("books"), "Books");
+            books_page.set_icon_name(Some("x-office-document-symbolic"));
+        }
+    }
 
-    let language_indicator = gtk4::Label::builder()
-        .label(format!("{} {}", active_language.display_name(), active_language.code().to_uppercase()))
-        .css_classes(["langspark-language-indicator"])
-        .build();
+    // Header: view switcher as the title, app menu
+    let switcher_title = ViewSwitcherTitle::builder().stack(&view_stack).title("LangSpark").build();
 
     let menu = gio::Menu::new();
     menu.append(Some("Preferences"), Some("app.preferences"));
@@ -139,7 +154,6 @@ pub fn build_main_window(
     let menu_button = gtk4::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).build();
 
     let header = HeaderBar::builder().title_widget(&switcher_title).build();
-    header.pack_start(&language_indicator);
     header.pack_end(&menu_button);
 
     let content = GtkBox::new(gtk4::Orientation::Vertical, 0);
@@ -158,7 +172,7 @@ pub fn build_main_window(
 }
 
 /// Register app-level actions (`app.preferences`, `app.about`, `app.quit`)
-/// backing the header menu, per task 11.6/11.7.
+/// backing the header menu.
 fn register_app_actions(app: &AdwApplication, window: &AdwApplicationWindow, settings: Rc<RefCell<Settings>>) {
     let quit_action = SimpleAction::new("quit", None);
     quit_action.connect_activate(glib::clone!(
@@ -258,6 +272,7 @@ fn dictionary_add_word_callbacks(
     active_language: Language,
     settings: &Rc<RefCell<Settings>>,
     toast_overlay: &ToastOverlay,
+    review_append: &Rc<dyn Fn(review::ReviewItem)>,
 ) -> Option<vocabulary::AddWordCallbacks> {
     let code = active_language.code();
     if !state.dictionary.is_loaded(code) {
@@ -269,15 +284,40 @@ fn dictionary_add_word_callbacks(
         Rc::new(move |query: &str| state.dictionary.search(code, query).into_iter().cloned().collect())
     };
 
-    let persist: Rc<
-        dyn Fn(langspark_core::VocabEntry, Box<dyn Fn(langspark_core::VocabularyEntry)>, Box<dyn Fn()>),
-    > = Rc::new(glib::clone!(
+    Some(vocabulary::AddWordCallbacks {
+        search,
+        persist: build_persist_callback(state, settings, toast_overlay, review_append),
+    })
+}
+
+/// Build the "persist a dictionary entry into the user's vocabulary" write
+/// path: shared by `dictionary_add_word_callbacks` (the Vocabulary tab's
+/// "Add Word" dialog) and `books::popup`'s "Add to Vocabulary" button, both
+/// of which start from a `langspark_core::VocabEntry` (a dictionary lookup
+/// result, not yet saved) and need the exact same
+/// `vocabulary_repo.create` + immediately-due `SrsCard` behavior — a word
+/// added while reading should show up in Review exactly like one added from
+/// the dictionary search dialog. That includes *live*, not just after a
+/// database reload: `review_append` (see `review::ReviewSession::append`)
+/// is called with the freshly-created card so it's reviewable immediately —
+/// the Vocabulary tab's own equivalent immediacy (`vocabulary::VocabTab::append`)
+/// is layered on separately by each caller, since (unlike Review) only one
+/// of the two callers here needs it wired in (see `persist_and_refresh_vocab_tab`).
+fn build_persist_callback(
+    state: &Arc<AppState>,
+    settings: &Rc<RefCell<Settings>>,
+    toast_overlay: &ToastOverlay,
+    review_append: &Rc<dyn Fn(review::ReviewItem)>,
+) -> Rc<dyn Fn(langspark_core::VocabEntry, Box<dyn Fn(langspark_core::VocabularyEntry)>, Box<dyn Fn()>)> {
+    Rc::new(glib::clone!(
         #[strong]
         state,
         #[strong]
         settings,
         #[weak]
         toast_overlay,
+        #[strong]
+        review_append,
         move |dict_entry: langspark_core::VocabEntry,
               on_done: Box<dyn Fn(langspark_core::VocabularyEntry)>,
               on_error: Box<dyn Fn()>| {
@@ -297,9 +337,10 @@ fn dictionary_add_word_callbacks(
             // this callback was built) rather than capturing it once at startup.
             let starting_ease_factor = settings.borrow().starting_ease_factor;
             let state = state.clone();
+            let review_append = review_append.clone();
             crate::task::spawn_on_main(async move {
                 let to_insert = new_entry.clone();
-                let result = crate::task::run_blocking(move || -> anyhow::Result<i64> {
+                let result = crate::task::run_blocking(move || -> anyhow::Result<(i64, langspark_core::SrsCard)> {
                     let vocab_id = state.vocabulary_repo.create(&to_insert)?;
                     // Newly-added words are immediately due for review: also
                     // create the SRS card that puts them in the Review tab's
@@ -307,14 +348,24 @@ fn dictionary_add_word_callbacks(
                     let mut card = langspark_core::SrsCard::new("vocabulary", &to_insert.language);
                     card.vocab_id = Some(vocab_id);
                     card.ease_factor = starting_ease_factor;
-                    state.srs_repo.create(&card)?;
-                    Ok(vocab_id)
+                    card.id = Some(state.srs_repo.create(&card)?);
+                    Ok((vocab_id, card))
                 })
                 .await;
                 match result {
-                    Ok(id) => {
+                    Ok((id, card)) => {
                         let mut persisted = new_entry;
                         persisted.id = Some(id);
+                        // Reuses `build_items_from_cards`' own front/back/speak_text
+                        // construction (a 1-card, 1-vocab-entry slice) rather than
+                        // duplicating it here, so the two can't drift apart.
+                        if let Some(item) =
+                            review::build_items_from_cards(std::slice::from_ref(&card), std::slice::from_ref(&persisted), &[])
+                                .into_iter()
+                                .next()
+                        {
+                            review_append(item);
+                        }
                         on_done(persisted);
                     }
                     Err(e) => {
@@ -324,9 +375,184 @@ fn dictionary_add_word_callbacks(
                 }
             });
         }
+    ))
+}
+
+/// Wrap a `persist` callback (see `build_persist_callback`) so that, on top
+/// of whatever the caller's own `on_done` does (e.g. a popup's button
+/// switching to "Added"), the newly-saved entry is also pushed into the
+/// Vocabulary tab's live list via `vocabulary::VocabTab::append`. Without
+/// this, a word added from outside the Vocabulary tab (currently: the Books
+/// reader's popup) is correctly written to the database but doesn't show up
+/// in the Vocabulary tab until the app is restarted and reloads it from
+/// disk — the tab's list is otherwise only ever mutated by its own "Add
+/// Word" dialog (see `vocabulary::build_tab`'s doc comment).
+fn persist_and_refresh_vocab_tab(
+    persist: Rc<dyn Fn(langspark_core::VocabEntry, Box<dyn Fn(langspark_core::VocabularyEntry)>, Box<dyn Fn()>)>,
+    vocab_append: Rc<dyn Fn(langspark_core::VocabularyEntry)>,
+) -> Rc<dyn Fn(langspark_core::VocabEntry, Box<dyn Fn(langspark_core::VocabularyEntry)>, Box<dyn Fn()>)> {
+    Rc::new(move |dict_entry, on_done: Box<dyn Fn(langspark_core::VocabularyEntry)>, on_error: Box<dyn Fn()>| {
+        let vocab_append = vocab_append.clone();
+        persist(
+            dict_entry,
+            Box::new(move |saved: langspark_core::VocabularyEntry| {
+                vocab_append(saved.clone());
+                on_done(saved);
+            }),
+            on_error,
+        );
+    })
+}
+
+/// Resolve where the book catalog and cached book text live: the
+/// `books_data_dir` Preference override if set, otherwise the default XDG
+/// books directory — the same override pattern `dictionary_data_dir` uses
+/// (see `preferences.rs`).
+fn effective_books_dir(settings: &Settings) -> Option<std::path::PathBuf> {
+    settings.books_data_dir.clone().or_else(|| crate::config::AppDirs::new().map(|d| d.books_dir()))
+}
+
+/// Load the installed Aozora Bunko catalog from `<books_dir>/catalog.json`
+/// (see `langspark_core::install_aozora_catalog`), or an empty list if none
+/// is installed yet — in which case the Books tab simply isn't shown, the
+/// same graceful-degradation approach `asr_model_installed` uses for the
+/// Pronunciation tab.
+fn load_installed_book_catalog(settings: &Settings) -> Vec<langspark_core::BookCatalogEntry> {
+    let Some(dir) = effective_books_dir(settings) else { return Vec::new() };
+    let Ok(json) = std::fs::read_to_string(dir.join("catalog.json")) else { return Vec::new() };
+    langspark_core::load_book_catalog(&json).unwrap_or_default()
+}
+
+/// Build the Books tab's callbacks, or `None` if the active language has no
+/// dictionary loaded — word lookups while reading need one just as much as
+/// the Vocabulary tab's "Add Word" dialog does (see
+/// `dictionary_add_word_callbacks`).
+fn books_tab_callbacks(
+    state: &Arc<AppState>,
+    active_language: Language,
+    settings: &Rc<RefCell<Settings>>,
+    toast_overlay: &ToastOverlay,
+    vocab_append: &Rc<dyn Fn(langspark_core::VocabularyEntry)>,
+    review_append: &Rc<dyn Fn(review::ReviewItem)>,
+) -> Option<books::BooksTabCallbacks> {
+    let code = active_language.code();
+    if !state.dictionary.is_loaded(code) {
+        return None;
+    }
+    let books_dir = effective_books_dir(&settings.borrow())?;
+
+    let open_book: Rc<
+        dyn Fn(langspark_core::BookCatalogEntry, Box<dyn Fn(langspark_core::BookText)>, Box<dyn Fn(String)>),
+    > = Rc::new(glib::clone!(
+        #[weak]
+        toast_overlay,
+        move |entry: langspark_core::BookCatalogEntry,
+              on_done: Box<dyn Fn(langspark_core::BookText)>,
+              on_error: Box<dyn Fn(String)>| {
+            let books_dir = books_dir.clone();
+            let title = entry.title.clone();
+            crate::task::spawn_on_main(async move {
+                let result =
+                    crate::task::run_blocking(move || langspark_core::fetch_book(&entry, &books_dir, &|_, _| {})).await;
+                match result {
+                    Ok(book) => on_done(book),
+                    Err(e) => {
+                        let message = format!("Couldn't open '{title}': {e}");
+                        diagnostics::show_error_toast(&toast_overlay, &message);
+                        on_error(message);
+                    }
+                }
+            });
+        }
     ));
 
-    Some(vocabulary::AddWordCallbacks { search, persist })
+    let lookup: Rc<dyn Fn(&str, usize) -> Option<(usize, usize, langspark_core::VocabEntry)>> = {
+        let state = state.clone();
+        Rc::new(move |text: &str, char_index: usize| {
+            let (start, end, entry) = state.dictionary.word_at(code, text, char_index)?;
+            Some((start, end, entry.clone()))
+        })
+    };
+
+    let reader = books::reader::ReaderCallbacks {
+        lookup,
+        speak: vocab_play_callback(active_language, &settings.borrow(), toast_overlay),
+        add_to_vocabulary: persist_and_refresh_vocab_tab(
+            build_persist_callback(state, settings, toast_overlay, review_append),
+            vocab_append.clone(),
+        ),
+        translate_paragraph: translate_paragraph_callback(state, toast_overlay),
+    };
+
+    Some(books::BooksTabCallbacks { open_book, reader })
+}
+
+/// Build the `translate_paragraph` callback (see
+/// `books::reader::ReaderCallbacks`). Always returns a callable closure,
+/// unlike `speak`/`add_to_vocabulary`'s `Option`-gating — when no
+/// translation model is installed, it still exists, it just always reports
+/// that through `on_error`, so the paragraph popup stays available and
+/// explains what to do rather than the icon silently disappearing.
+fn translate_paragraph_callback(
+    state: &Arc<AppState>,
+    toast_overlay: &ToastOverlay,
+) -> Rc<dyn Fn(String, Box<dyn Fn(String)>, Box<dyn Fn(String)>)> {
+    let model_dir = crate::config::AppDirs::new().map(|d| d.translation_model_dir());
+    let cache_dir = crate::config::AppDirs::new().map(|d| d.translation_cache_dir());
+    let state = state.clone();
+
+    Rc::new(glib::clone!(
+        #[weak]
+        toast_overlay,
+        move |japanese: String, on_done: Box<dyn Fn(String)>, on_error: Box<dyn Fn(String)>| {
+            let Some(model_dir) = model_dir.clone().filter(|d| d.join("model.safetensors").exists()) else {
+                on_error("Translation model not installed \u{2014} install it in Preferences.".to_string());
+                return;
+            };
+            if let Some(cache) = &cache_dir {
+                if let Some(cached) = langspark_core::TranslationCache::new(cache.clone()).get(&japanese) {
+                    on_done(cached);
+                    return;
+                }
+            }
+
+            let state = state.clone();
+            let cache_dir = cache_dir.clone();
+            let japanese_for_cache = japanese.clone();
+            crate::task::spawn_on_main(async move {
+                let result = crate::task::run_blocking(move || -> anyhow::Result<String> {
+                    let translator = state.translator.get_or_init(|| match langspark_core::Translator::load(&model_dir) {
+                        Ok(t) => Some(Mutex::new(t)),
+                        Err(e) => {
+                            log::warn!("failed to load translation model: {e}");
+                            None
+                        }
+                    });
+                    let Some(translator) = translator else {
+                        anyhow::bail!("translation model failed to load (see logs)");
+                    };
+                    let translator = translator.lock().expect("translator mutex poisoned");
+                    translator.translate(&japanese)
+                })
+                .await;
+                match result {
+                    Ok(english) => {
+                        if let Some(dir) = &cache_dir {
+                            if let Err(e) = langspark_core::TranslationCache::new(dir.clone()).put(&japanese_for_cache, &english) {
+                                log::warn!("failed to cache translation: {e}");
+                            }
+                        }
+                        on_done(english);
+                    }
+                    Err(e) => {
+                        let message = format!("Couldn't translate paragraph: {e}");
+                        diagnostics::show_error_toast(&toast_overlay, &message);
+                        on_error(message);
+                    }
+                }
+            });
+        }
+    ))
 }
 
 const HELP_TEXT: &str = "\
@@ -342,6 +568,11 @@ then Record to attempt it yourself. You'll get a score and feedback. Only \
 appears once a speech recognition model is installed (see README.md); also \
 requires a TTS backend configured in Preferences to hear the reference \
 pronunciation.
+
+Books — Read Aozora Bunko classics grouped by genre. Click any word in the \
+text for its reading and meaning, hear it pronounced, and add it straight to \
+your vocabulary deck. Only appears once a dictionary and the book catalog \
+are installed (see Preferences).
 
 Preferences — Change the active language (takes effect on restart), TTS \
 voices, SRS algorithm, and audio devices.";

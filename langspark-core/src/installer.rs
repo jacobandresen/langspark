@@ -441,6 +441,258 @@ fn run_checked(cmd: &mut std::process::Command) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------
+// Aozora Bunko book catalog + per-work text — see `books.rs` for the
+// parsed data types and ruby-markup parsing this feeds into.
+// ---------------------------------------------------------------------
+
+use crate::books::{genre_for_ndc, parse_book_text, BookCatalogEntry, BookText};
+
+/// The official Aozora Bunko repository mirrors both the site's bulk CSV
+/// catalog and every work's text; fetched via `raw.githubusercontent.com`
+/// rather than cloning the (very large) repository.
+const AOZORA_CATALOG_URL: &str =
+    "https://raw.githubusercontent.com/aozorabunko/aozorabunko/master/index_pages/list_person_all_extended_utf8.zip";
+
+/// Extract the single member of `zip_bytes` whose name ends with `ext`
+/// (case-insensitive) — both the catalog archive (one `.csv`) and a book
+/// archive (one `.txt`) are simple single-member zips.
+fn extract_member(zip_bytes: &[u8], ext: &str) -> Result<Vec<u8>> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).context("failed to read zip archive")?;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).context("corrupt zip entry")?;
+        if file.name().to_lowercase().ends_with(ext) {
+            let mut out = Vec::new();
+            std::io::copy(&mut file, &mut out).context("failed to read zip entry")?;
+            return Ok(out);
+        }
+    }
+    bail!("zip archive did not contain a '{ext}' file");
+}
+
+/// Look up a CSV column's index by its exact header name — resilient to the
+/// exact column count/order of Aozora's catalog, which isn't guaranteed
+/// stable across revisions (unlike `jmdict-simplified`'s versioned JSON
+/// releases, this CSV is updated in place).
+fn column_index(headers: &csv::StringRecord, name: &str) -> Result<usize> {
+    headers
+        .iter()
+        .position(|h| h == name)
+        .with_context(|| format!("catalog CSV has no '{name}' column (headers: {})", headers.iter().collect::<Vec<_>>().join(", ")))
+}
+
+/// Parse Aozora's `list_person_all_extended_utf8.csv` (already extracted
+/// from its zip) into a catalog of books. Skips rows missing a title,
+/// author id, or text file URL — some catalog entries are metadata-only,
+/// with no digitized text yet.
+fn parse_aozora_catalog_csv(csv_bytes: &[u8]) -> Result<Vec<BookCatalogEntry>> {
+    let mut reader = csv::ReaderBuilder::new().from_reader(csv_bytes);
+    let headers = reader.headers().context("catalog CSV has no header row")?.clone();
+
+    let id_col = column_index(&headers, "作品ID")?;
+    let title_col = column_index(&headers, "作品名")?;
+    let last_name_col = column_index(&headers, "姓")?;
+    let first_name_col = column_index(&headers, "名")?;
+    let ndc_col = column_index(&headers, "分類番号")?;
+    let url_col = column_index(&headers, "テキストファイルURL")?;
+
+    let mut entries = Vec::new();
+    for record in reader.records() {
+        let record = record.context("malformed catalog CSV row")?;
+        let get = |i: usize| record.get(i).unwrap_or("").trim();
+
+        let (id, title, text_url) = (get(id_col), get(title_col), get(url_col));
+        if id.is_empty() || title.is_empty() || text_url.is_empty() {
+            continue;
+        }
+
+        let author =
+            [get(last_name_col), get(first_name_col)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
+        entries.push(BookCatalogEntry {
+            id: id.to_string(),
+            title: title.to_string(),
+            author,
+            genre: genre_for_ndc(get(ndc_col)),
+            text_url: text_url.to_string(),
+        });
+    }
+    Ok(entries)
+}
+
+/// Download and install the Aozora Bunko book catalog to `dest` (typically
+/// `<books_dir>/catalog.json`) as a JSON-encoded `Vec<BookCatalogEntry>` —
+/// gates whether the Books tab appears (see `app.rs`), the same way
+/// `install_jmdict` gates the Vocabulary tab's "Add Word" button. Returns
+/// the number of catalog entries installed.
+pub fn install_aozora_catalog(dest: &Path, on_progress: &ProgressFn) -> Result<usize> {
+    let zip_bytes = download_bytes(AOZORA_CATALOG_URL, on_progress)?;
+    let csv_bytes = extract_member(&zip_bytes, ".csv")?;
+    let entries = parse_aozora_catalog_csv(&csv_bytes)?;
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).context("failed to create books directory")?;
+    }
+    let json = serde_json::to_vec(&entries).context("failed to serialize book catalog")?;
+    std::fs::write(dest, json).with_context(|| format!("failed to write {}", dest.display()))?;
+
+    Ok(entries.len())
+}
+
+/// Fetch and parse `entry`'s full text, caching the parsed result to
+/// `<cache_dir>/<entry.id>.json` so re-opening a book doesn't re-download or
+/// re-parse it. Aozora serves book text as a Shift-JIS-encoded `.txt` inside
+/// a zip (`entry.text_url`); `encoding_rs` decodes it losslessly for all but
+/// a handful of obscure/gaiji characters outside Shift-JIS's mapping table,
+/// which become U+FFFD rather than failing the whole book.
+pub fn fetch_book(entry: &BookCatalogEntry, cache_dir: &Path, on_progress: &ProgressFn) -> Result<BookText> {
+    let cache_path = cache_dir.join(format!("{}.json", entry.id));
+    if let Ok(cached) = std::fs::read(&cache_path) {
+        if let Ok(book) = serde_json::from_slice(&cached) {
+            return Ok(book);
+        }
+    }
+
+    let zip_bytes =
+        download_bytes(&entry.text_url, on_progress).with_context(|| format!("failed to download '{}'", entry.title))?;
+    let sjis_bytes = extract_member(&zip_bytes, ".txt")?;
+    let (text, _, _) = encoding_rs::SHIFT_JIS.decode(&sjis_bytes);
+    let book = parse_book_text(&text);
+
+    std::fs::create_dir_all(cache_dir).context("failed to create book cache directory")?;
+    if let Ok(json) = serde_json::to_vec(&book) {
+        let _ = std::fs::write(&cache_path, json); // best-effort: a failed cache write shouldn't fail the fetch
+    }
+
+    Ok(book)
+}
+
+// ---------------------------------------------------------------------
+// Paragraph translation model (Helsinki-NLP OPUS-MT ja-en, via candle) —
+// see `translation.rs` for the model this feeds and why it's candle-based
+// rather than the more obvious rust-bert.
+// ---------------------------------------------------------------------
+
+/// Files fetched directly from the model's Hugging Face repo. No
+/// `model.safetensors` exists for this one (unlike `ASR_MODEL_FILES`'s
+/// model) — `translation::Translator::load` reads `pytorch_model.bin`
+/// directly instead.
+const TRANSLATION_MODEL_FILES: &[&str] =
+    &["config.json", "pytorch_model.bin", "source.spm", "target.spm", "vocab.json"];
+
+/// Download the Helsinki-NLP OPUS-MT Japanese→English translation model
+/// (~300MB) into `dest_dir`, then convert its weights to `model.safetensors`
+/// (see `convert_translation_weights` for why that's a separate step).
+/// Idempotent: skips any file that already exists, matching
+/// `install_asr_model`'s convention.
+pub fn install_translation_model(dest_dir: &Path, on_progress: &ProgressFn) -> Result<String> {
+    std::fs::create_dir_all(dest_dir).context("failed to create translation model directory")?;
+    const BASE_URL: &str = "https://huggingface.co/Helsinki-NLP/opus-mt-ja-en/resolve/main";
+
+    for file in TRANSLATION_MODEL_FILES {
+        let dest = dest_dir.join(file);
+        if dest.exists() {
+            continue;
+        }
+        let mut out =
+            std::fs::File::create(&dest).with_context(|| format!("failed to create {}", dest.display()))?;
+        download_to(&format!("{BASE_URL}/{file}"), &mut out, on_progress)
+            .with_context(|| format!("failed to download {file}"))?;
+    }
+
+    if !dest_dir.join("model.safetensors").exists() {
+        convert_translation_weights(dest_dir)?;
+    }
+
+    Ok("Installed Helsinki-NLP/opus-mt-ja-en".to_string())
+}
+
+/// Convert `pytorch_model.bin` to `model.safetensors`.
+///
+/// Helsinki-NLP published this checkpoint years ago in PyTorch's *legacy*
+/// pickle format (a bare pickle stream, no zip wrapper — confirmed against
+/// the real downloaded file: it starts with the raw pickle protocol-2
+/// marker `\x80\x02`, not a zip local-file-header). `candle`'s pickle/`.pth`
+/// reader (what `translation::Translator` loads weights through) only
+/// understands the newer zip-based format modern `torch.save` produces, and
+/// there's no pre-converted `safetensors` variant of this particular repo
+/// published anywhere (checked huggingface.co/Helsinki-NLP/opus-mt-ja-en's
+/// `/refs` API — no conversion branch — and the community re-uploads that do
+/// exist only publish ONNX, not safetensors). So this does the one-time
+/// conversion itself, the same way `generate_tokenizer_json` already does
+/// for the ASR model: a throwaway Python venv, removed afterward either way.
+/// This is the only place in the translation feature that touches Python or
+/// (transiently, at install time only) PyTorch — `Translator` itself is
+/// pure-`candle` at runtime, same as before.
+fn convert_translation_weights(model_dir: &Path) -> Result<()> {
+    if std::process::Command::new("python3").arg("--version").output().is_err() {
+        bail!(
+            "python3 is required to convert the translation model's weights (via a throwaway \
+             venv with 'torch' and 'safetensors') but wasn't found on PATH"
+        );
+    }
+
+    let venv_dir = std::env::temp_dir().join(format!("langspark-translation-venv-{}", std::process::id()));
+    let result = convert_translation_weights_with_venv(model_dir, &venv_dir);
+    let _ = std::fs::remove_dir_all(&venv_dir);
+    result
+}
+
+fn convert_translation_weights_with_venv(model_dir: &Path, venv_dir: &Path) -> Result<()> {
+    run_checked(std::process::Command::new("python3").args(["-m", "venv"]).arg(venv_dir))
+        .context("failed to create a Python venv")?;
+
+    let pip = venv_dir.join("bin/pip");
+    run_checked(std::process::Command::new(&pip).args(["install", "--upgrade", "pip", "-q"]))
+        .context("failed to upgrade pip in the venv")?;
+    // CPU-only wheel: the conversion just moves tensors from one file format
+    // to another, no GPU (or even any actual inference) involved. Separate
+    // from the `safetensors` install below — `--index-url` (rather than
+    // `--extra-index-url`) replaces PyPI entirely for this command, and the
+    // PyTorch CPU wheel index doesn't host `safetensors`.
+    run_checked(std::process::Command::new(&pip).args([
+        "install",
+        "torch",
+        "--index-url",
+        "https://download.pytorch.org/whl/cpu",
+        "-q",
+    ]))
+    .context("failed to install 'torch' in the venv")?;
+    // `numpy` isn't imported by this script directly, but
+    // `safetensors.torch.save_file` reaches for it internally.
+    run_checked(std::process::Command::new(&pip).args(["install", "safetensors", "numpy", "-q"]))
+        .context("failed to install 'safetensors'/'numpy' in the venv")?;
+
+    let weights_path = model_dir.join("pytorch_model.bin");
+    let output_path = model_dir.join("model.safetensors");
+    let script = format!(
+        "import torch\n\
+         from safetensors.torch import save_file\n\
+         state_dict = torch.load('{}', map_location='cpu', weights_only=True)\n\
+         # Marian ties its encoder/decoder/output embeddings together (see the\n\
+         # model's own share_encoder_decoder_embeddings config field), which\n\
+         # means several state_dict keys can alias the exact same storage —\n\
+         # safetensors refuses to write aliased tensors, so clone every\n\
+         # tensor to give each key its own independent storage.\n\
+         state_dict = {{k: v.clone().contiguous() for k, v in state_dict.items()}}\n\
+         save_file(state_dict, '{}')\n",
+        weights_path.display(),
+        output_path.display(),
+    );
+    // `env_remove`, not just leaving it alone: a system already set up for
+    // this project's *own* ASR feature (`scripts/setup-asr.sh`) exports
+    // `LD_LIBRARY_PATH` pointing at *that* libtorch install so the Rust
+    // `tch`/`qwen3-asr-rs` linker can find it — if a shell with that already
+    // exported launches LangSpark's installer, this pip-installed `torch`'s
+    // own bundled libtorch gets shadowed by it at import time instead
+    // (mismatched ABI/Python version, so `import torch` fails with an
+    // undefined-symbol error). This conversion is unrelated to that libtorch
+    // install entirely, so the fix is simply not inheriting the variable.
+    run_checked(std::process::Command::new(venv_dir.join("bin/python")).args(["-c", &script]).env_remove("LD_LIBRARY_PATH"))
+        .context("failed to convert translation model weights to safetensors")?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,5 +857,83 @@ mod tests {
 
         let err = extract_json_member(&tgz, &dest).unwrap_err();
         assert!(err.to_string().contains("did not contain a .json file"));
+    }
+
+    fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(&mut buf);
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, data) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(data).unwrap();
+        }
+        writer.finish().unwrap();
+        buf.into_inner()
+    }
+
+    #[test]
+    fn test_extract_member_finds_by_extension_case_insensitive() {
+        let zip = make_zip(&[("readme.TXT", b"not this one" as &[u8]), ("book.CSV", b"id,title\n1,foo\n")]);
+        let csv = extract_member(&zip, ".csv").unwrap();
+        assert_eq!(csv, b"id,title\n1,foo\n");
+    }
+
+    #[test]
+    fn test_extract_member_errors_without_match() {
+        let zip = make_zip(&[("readme.txt", b"nothing here" as &[u8])]);
+        let err = extract_member(&zip, ".csv").unwrap_err();
+        assert!(err.to_string().contains("did not contain a '.csv' file"));
+    }
+
+    fn sample_catalog_csv() -> String {
+        // Only the columns parse_aozora_catalog_csv actually reads —
+        // extra/differently-ordered columns are fine since lookup is by
+        // header name, which is the point.
+        "作品ID,作品名,姓,名,分類番号,テキストファイルURL,unused\n\
+         1234,吾輩は猫である,夏目,漱石,NDC 913,https://www.aozora.gr.jp/cards/000148/files/789.zip,x\n\
+         5678,金色夜叉,尾崎,紅葉,NDC 913,https://www.aozora.gr.jp/cards/000000/files/000.zip,y\n\
+         9999,未digitized,誰か,不明,NDC 913,,z\n"
+            .to_string()
+    }
+
+    #[test]
+    fn test_parse_aozora_catalog_csv_builds_entries_by_header_name() {
+        let entries = parse_aozora_catalog_csv(sample_catalog_csv().as_bytes()).unwrap();
+        assert_eq!(entries.len(), 2); // the row with no text_url is skipped
+        assert_eq!(entries[0].id, "1234");
+        assert_eq!(entries[0].title, "吾輩は猫である");
+        assert_eq!(entries[0].author, "夏目 漱石");
+        assert_eq!(entries[0].genre.as_deref(), Some("Novels & Stories"));
+        assert_eq!(entries[0].text_url, "https://www.aozora.gr.jp/cards/000148/files/789.zip");
+    }
+
+    #[test]
+    fn test_parse_aozora_catalog_csv_errors_on_missing_column() {
+        let err = parse_aozora_catalog_csv(b"foo,bar\n1,2\n").unwrap_err();
+        assert!(err.to_string().contains("has no '作品ID' column"));
+    }
+
+    #[test]
+    fn test_fetch_book_caches_parsed_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().join("books");
+        let entry = BookCatalogEntry {
+            id: "42".to_string(),
+            title: "test".to_string(),
+            author: "test author".to_string(),
+            genre: None,
+            text_url: "unused-because-the-cache-is-seeded-directly-below".to_string(),
+        };
+
+        // Seed the cache directly (the download path needs real network
+        // access, so it isn't exercised here — same tradeoff as
+        // `test_install_tatoeba_examples_joins_and_writes_pairs` above) to
+        // exercise the cache-hit path.
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        let expected = parse_book_text("吾輩は猫である。\n");
+        std::fs::write(cache_dir.join("42.json"), serde_json::to_vec(&expected).unwrap()).unwrap();
+
+        let book = fetch_book(&entry, &cache_dir, &|_, _| {}).unwrap();
+        assert_eq!(book.paragraphs, expected.paragraphs);
     }
 }

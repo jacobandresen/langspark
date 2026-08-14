@@ -8,3 +8,13 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "unwind"
+
+# Matmul-heavy dependencies (the local translation model's inference, via
+# `candle`/`gemm`) are unusably slow at the default dev-profile opt-level 0 —
+# measured at ~43s for one paragraph, dropping to ~1.7s once `gemm` itself is
+# optimized. Optimizing just third-party dependencies here (not the
+# workspace's own crates, which keep fast dev-profile incremental compiles)
+# gets translation to a usable speed in `cargo run`/`cargo test` without
+# paying for a full `--release` build (LTO + codegen-units=1 above).
+[profile.dev.package."*"]
+opt-level = 3

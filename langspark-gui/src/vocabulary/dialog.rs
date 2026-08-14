@@ -45,7 +45,11 @@ pub fn build(entry: &VocabularyEntry, examples: &[ExampleSentence], callbacks: V
         root.append(&Label::builder().label(reading).css_classes(["title-4", "dim-label"]).build());
     }
 
-    let meaning_row = adw::ActionRow::builder().title("Meaning").subtitle(&entry.meaning).build();
+    // `subtitle_lines` caps (and ellipsizes) how tall this row can grow — a
+    // word with a long meaning otherwise keeps wrapping indefinitely (see
+    // the matching fix in `books::popup`, which this dialog is meant to
+    // look and behave the same as).
+    let meaning_row = adw::ActionRow::builder().title("Meaning").subtitle(&entry.meaning).subtitle_lines(3).build();
     let list = gtk4::ListBox::builder().css_classes(["boxed-list"]).margin_top(12).build();
     list.append(&meaning_row);
 

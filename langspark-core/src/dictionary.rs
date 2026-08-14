@@ -348,7 +348,39 @@ pub struct DictionaryManager {
     entries: HashMap<String, Vec<VocabEntry>>,
     versions: HashMap<String, String>,
     tatoeba: HashMap<String, TatoebaExamples>,
+    /// Exact-match index (a word or reading form -> its index into
+    /// `entries[language]`) backing `word_at`. Built once when a
+    /// language's dictionary loads, alongside `entries` itself, rather than
+    /// lazily on first lookup — `load_japanese` already pays the cost of
+    /// parsing the full JMdict JSON, so indexing is a proportional
+    /// additional amount of one-time work rather than a separate path that
+    /// needs its own cache-invalidation story.
+    word_index: HashMap<String, HashMap<String, usize>>,
 }
+
+/// Build `DictionaryManager::word_index`'s per-language map: every entry's
+/// kanji and kana forms point back at that entry's position in `entries`.
+/// On a collision (the same form shared by more than one entry — real for
+/// Japanese, e.g. heteronyms), the first entry wins; good enough for a
+/// "what could this clicked text mean" popup, which just needs a plausible
+/// match, not every sense.
+fn build_word_index(entries: &[VocabEntry]) -> HashMap<String, usize> {
+    let mut index = HashMap::new();
+    for (i, entry) in entries.iter().enumerate() {
+        index.entry(entry.word.clone()).or_insert(i);
+        if let Some(reading) = &entry.reading {
+            index.entry(reading.clone()).or_insert(i);
+        }
+    }
+    index
+}
+
+/// Longest candidate substring `word_at` will try, and how far back from a
+/// given position it'll look for a start that covers it. Japanese
+/// dictionary words are essentially never longer than this in practice, so
+/// this bounds each lookup to a handful of `HashMap` lookups rather than a
+/// scan proportional to the rest of the paragraph.
+const LONGEST_MATCH_MAX_CHARS: usize = 12;
 
 /// Cap on how many Tatoeba-sourced sentences `examples_for` falls back to
 /// per word, keeping the vocabulary dialog's example list from being
@@ -365,11 +397,62 @@ impl DictionaryManager {
     /// entries are handled separately via [`load_kanjidic`] and the kanji repository).
     pub fn load_japanese(&mut self, jmdict_json: &str, version: Option<&str>) -> Result<()> {
         let entries = load_jmdict(jmdict_json)?;
+        self.word_index.insert("ja".to_string(), build_word_index(&entries));
         self.entries.insert("ja".to_string(), entries);
         if let Some(v) = version {
             self.versions.insert("ja".to_string(), v.to_string());
         }
         Ok(())
+    }
+
+    /// Find the dictionary entry (by kanji or kana form) for the word
+    /// *containing* `char_index` into `text` — not just one starting there —
+    /// the same greedy longest-prefix-match technique pop-up dictionaries
+    /// like Yomichan use to turn an arbitrary click/hover position in
+    /// unsegmented Japanese text into a word lookup, since Japanese has no
+    /// spaces to mark word boundaries. Returns the matched span as
+    /// `[start_char, end_char)` alongside the entry, so a caller doing
+    /// word-boundary highlighting (or repeated navigation — see
+    /// `books::reader`) doesn't have to re-derive it from `entry.word`'s
+    /// length: for entries with distinct kanji/kana forms, whichever form
+    /// actually matched `text` at this position may be shorter or longer
+    /// than `entry.word` itself.
+    ///
+    /// Considers every possible start position from `char_index` backward
+    /// (not just `char_index` itself), so hovering or clicking *anywhere*
+    /// within "受け取る" — not only its first character — resolves to that
+    /// whole word; among every start that covers `char_index`, the longest
+    /// resulting match wins. Operates on `text`/`char_index` directly rather
+    /// than through `normalize_for_language` (which strips whitespace and
+    /// isn't 1:1 length-safe), so the caller's character offsets — from a
+    /// Pango hit-test against this exact same `text` — stay valid throughout.
+    pub fn word_at(&self, language: &str, text: &str, char_index: usize) -> Option<(usize, usize, &VocabEntry)> {
+        let index = self.word_index.get(language)?;
+        let entries = self.entries.get(language)?;
+        let chars: Vec<char> = text.chars().collect();
+        if char_index >= chars.len() {
+            return None;
+        }
+
+        let earliest_start = char_index.saturating_sub(LONGEST_MATCH_MAX_CHARS - 1);
+        (earliest_start..=char_index)
+            .filter_map(|start| {
+                let max_len = LONGEST_MATCH_MAX_CHARS.min(chars.len() - start);
+                // Longest-first so e.g. starting from "受" prefers the full
+                // "受け取る" over just "受け", matching `word_at`'s own
+                // longest-overall-match tiebreak below.
+                (1..=max_len).rev().find_map(|len| {
+                    let end = start + len;
+                    if end <= char_index {
+                        return None; // doesn't reach char_index — not a covering match
+                    }
+                    let candidate: String = chars[start..end].iter().collect();
+                    let &i = index.get(&candidate)?;
+                    let entry = entries.get(i)?;
+                    Some((start, end, entry))
+                })
+            })
+            .max_by_key(|&(start, end, _)| end - start)
     }
 
     /// Load supplemental Tatoeba example sentences for `language` (currently
@@ -556,6 +639,87 @@ mod tests {
         assert_eq!(entries[0].kun_readings, Some("う.ける".to_string()));
         assert_eq!(entries[0].meanings, "receive; accept");
         assert_eq!(entries[0].jlpt_level, Some(3));
+    }
+
+    const RUBY_PRECEDENCE_FIXTURE: &str = r#"{
+        "words": [
+            {
+                "id": "1",
+                "kanji": [{"text": "受け"}],
+                "kana": [{"text": "うけ"}],
+                "sense": [{"partOfSpeech": [], "gloss": [{"lang": "eng", "text": "reception (short form)"}]}]
+            },
+            {
+                "id": "2",
+                "kanji": [{"text": "受け取る"}],
+                "kana": [{"text": "うけとる"}],
+                "sense": [{"partOfSpeech": [], "gloss": [{"lang": "eng", "text": "to receive"}]}]
+            }
+        ]
+    }"#;
+
+    #[test]
+    fn test_word_at_prefers_longer_entry_over_shorter_prefix() {
+        let mut manager = DictionaryManager::new();
+        manager.load_japanese(RUBY_PRECEDENCE_FIXTURE, None).unwrap();
+
+        let text = "彼は受け取る。";
+        let click_index = text.chars().position(|c| c == '受').unwrap();
+
+        let (start, end, matched) = manager.word_at("ja", text, click_index).unwrap();
+        assert_eq!(matched.word, "受け取る"); // not the shorter "受け", also a valid entry
+        assert_eq!((start, end), (click_index, click_index + 4));
+    }
+
+    #[test]
+    fn test_word_at_resolves_from_any_position_within_the_word() {
+        let mut manager = DictionaryManager::new();
+        manager.load_japanese(RUBY_PRECEDENCE_FIXTURE, None).unwrap();
+
+        let text = "彼は受け取る。";
+        let start_index = text.chars().position(|c| c == '受').unwrap();
+        // Hovering/clicking on the *second* character of "受け取る" (not
+        // just its first) must still resolve to the whole word — this is
+        // exactly the case `longest_match` (searching only forward from the
+        // given position) got wrong.
+        let mid_index = start_index + 1;
+
+        let (start, end, matched) = manager.word_at("ja", text, mid_index).unwrap();
+        assert_eq!(matched.word, "受け取る");
+        assert_eq!((start, end), (start_index, start_index + 4));
+    }
+
+    #[test]
+    fn test_word_at_by_reading_form_too() {
+        let mut manager = DictionaryManager::new();
+        manager.load_japanese(JMDICT_FIXTURE, None).unwrap();
+
+        // Clicking into a kana-only rendering (e.g. no kanji used in this
+        // particular book) still resolves via the reading form of the index.
+        let text = "彼はたべる。";
+        let click_index = text.chars().position(|c| c == 'た').unwrap();
+        let (_, _, matched) = manager.word_at("ja", text, click_index).unwrap();
+        assert_eq!(matched.word, "たべる");
+    }
+
+    #[test]
+    fn test_word_at_no_hit_returns_none() {
+        let mut manager = DictionaryManager::new();
+        manager.load_japanese(JMDICT_FIXTURE, None).unwrap();
+        assert!(manager.word_at("ja", "存在しない単語です。", 0).is_none());
+    }
+
+    #[test]
+    fn test_word_at_out_of_bounds_index_returns_none() {
+        let mut manager = DictionaryManager::new();
+        manager.load_japanese(JMDICT_FIXTURE, None).unwrap();
+        assert!(manager.word_at("ja", "たべる", 10).is_none());
+    }
+
+    #[test]
+    fn test_word_at_unloaded_language_returns_none() {
+        let manager = DictionaryManager::new();
+        assert!(manager.word_at("ja", "たべる", 0).is_none());
     }
 
     #[test]

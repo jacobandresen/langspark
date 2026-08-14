@@ -32,10 +32,22 @@ pub struct ReviewItem {
 }
 
 /// Runs a review session over a queue of cards, calling `on_review` with
-/// (index, rating) each time the user rates a card so the caller can persist
-/// the SM-2 update (e.g. via `SqliteSrsRepository::update_after_review`).
+/// (the rated card's database id, rating) each time the user rates a card so
+/// the caller can persist the SM-2 update (e.g. via
+/// `SqliteSrsRepository::update_after_review`) — the id comes from the
+/// queue's own `ReviewItem::card.id` at rating time rather than a
+/// caller-maintained id-per-position list, so it stays correct even as
+/// `append` grows the queue past whatever length it started at.
 pub struct ReviewSession {
     pub root: gtk4::Widget,
+    /// Push a newly-created card onto the live queue and refresh the visible
+    /// card — including flipping a session that had already reached "done"
+    /// back to showing it. Wired from `app.rs::build_persist_callback` so a
+    /// word just added to the vocabulary (which always creates an
+    /// immediately-due `SrsCard`, see that function's doc comment) becomes
+    /// reviewable without restarting the app, the same way `vocabulary::VocabTab::append`
+    /// makes it show up in the Vocabulary tab immediately.
+    pub append: Rc<dyn Fn(ReviewItem)>,
 }
 
 impl ReviewSession {
@@ -43,21 +55,30 @@ impl ReviewSession {
     /// Play button is clicked — `None` (matching `vocabulary::dialog`'s
     /// pattern) omits the button entirely rather than showing a disabled one,
     /// since no language currently reviewed lacks a TTS backend for long.
-    pub fn new(queue: Vec<ReviewItem>, on_review: impl Fn(usize, u32) + 'static, on_play: Option<Rc<dyn Fn(String)>>) -> Self {
-        let root = Box::new(Orientation::Vertical, 12);
+    pub fn new(queue: Vec<ReviewItem>, on_review: impl Fn(i64, u32) + 'static, on_play: Option<Rc<dyn Fn(String)>>) -> Self {
+        let root = Box::new(Orientation::Vertical, 8);
         root.set_margin_top(12);
         root.set_margin_bottom(12);
         root.set_margin_start(12);
         root.set_margin_end(12);
 
-        let progress_label = Label::builder().css_classes(["caption"]).build();
+        let progress_bar = gtk4::ProgressBar::builder().show_text(false).build();
+        let progress_label = Label::builder().css_classes(["caption", "dim-label"]).build();
+        root.append(&progress_bar);
+        root.append(&progress_label);
+
+        // Vertically centers everything below the progress bar in whatever
+        // space is left — without this, a tall window leaves the card
+        // pinned at the top with a large dead gap underneath it.
+        let center_wrapper = Box::new(Orientation::Vertical, 20);
+        center_wrapper.set_valign(gtk4::Align::Center);
+        center_wrapper.set_vexpand(true);
+        root.append(&center_wrapper);
 
         let card_text = Label::builder()
             .css_classes(["title-1"])
             .wrap(true)
             .justify(gtk4::Justification::Center)
-            .margin_top(24)
-            .margin_bottom(24)
             .build();
 
         let play_btn = on_play.is_some().then(|| {
@@ -65,10 +86,21 @@ impl ReviewSession {
                 .icon_name("media-playback-start-symbolic")
                 .halign(gtk4::Align::Center)
                 .tooltip_text("Play the word")
+                .margin_top(12)
                 .build()
         });
 
+        let card_frame = Box::new(Orientation::Vertical, 4);
+        card_frame.set_halign(gtk4::Align::Center);
+        card_frame.set_css_classes(&["langspark-review-card"]);
+        card_frame.append(&card_text);
+        if let Some(btn) = &play_btn {
+            card_frame.append(btn);
+        }
+        center_wrapper.append(&card_frame);
+
         let show_answer = gtk4::Button::builder().label("Show Answer").halign(gtk4::Align::Center).build();
+        center_wrapper.append(&show_answer);
 
         let rating_box = Box::new(Orientation::Horizontal, 8);
         rating_box.set_halign(gtk4::Align::Center);
@@ -80,14 +112,14 @@ impl ReviewSession {
         for btn in [&again_btn, &hard_btn, &good_btn, &easy_btn] {
             rating_box.append(btn);
         }
+        center_wrapper.append(&rating_box);
 
-        root.append(&progress_label);
-        root.append(&card_text);
-        if let Some(btn) = &play_btn {
-            root.append(btn);
-        }
-        root.append(&show_answer);
-        root.append(&rating_box);
+        let shortcut_hint = Label::builder()
+            .label("Space to reveal \u{00b7} 1\u{2013}4 to rate")
+            .css_classes(["caption", "dim-label"])
+            .halign(gtk4::Align::Center)
+            .build();
+        center_wrapper.append(&shortcut_hint);
 
         let queue = Rc::new(RefCell::new(queue));
         let index = Rc::new(Cell::new(0usize));
@@ -98,11 +130,13 @@ impl ReviewSession {
             let queue = queue.clone();
             let index = index.clone();
             let showing_answer = showing_answer.clone();
+            let progress_bar = progress_bar.clone();
             let progress_label = progress_label.clone();
             let card_text = card_text.clone();
             let show_answer_btn = show_answer.clone();
             let rating_box = rating_box.clone();
             let play_btn = play_btn.clone();
+            let shortcut_hint = shortcut_hint.clone();
             move || {
                 let q = queue.borrow();
                 let total = q.len();
@@ -110,17 +144,20 @@ impl ReviewSession {
                 showing_answer.set(false);
                 rating_box.set_visible(false);
                 show_answer_btn.set_visible(true);
+                progress_bar.set_fraction(if total == 0 { 0.0 } else { i.min(total) as f64 / total as f64 });
 
                 if i >= total {
-                    progress_label.set_label(&format!("{total} of {total} — done!"));
+                    progress_label.set_label(&format!("{total} of {total} \u{2014} done!"));
                     card_text.set_label("Review complete");
                     show_answer_btn.set_visible(false);
+                    shortcut_hint.set_visible(false);
                     if let Some(btn) = &play_btn {
                         btn.set_visible(false);
                     }
                 } else {
                     progress_label.set_label(&format!("{} of {total}", i + 1));
                     card_text.set_label(&q[i].content.front);
+                    shortcut_hint.set_visible(true);
                     if let Some(btn) = &play_btn {
                         btn.set_visible(true);
                     }
@@ -128,6 +165,21 @@ impl ReviewSession {
             }
         };
         refresh();
+
+        let append: Rc<dyn Fn(ReviewItem)> = Rc::new(glib::clone!(
+            #[strong]
+            queue,
+            #[strong]
+            refresh,
+            move |item: ReviewItem| {
+                queue.borrow_mut().push(item);
+                // Re-evaluates the "done" check against the now-larger
+                // queue, so a session already on the "done" screen flips
+                // back to showing the newly-added card instead of staying
+                // stuck there until the app restarts.
+                refresh();
+            }
+        ));
 
         show_answer.connect_clicked(glib::clone!(
             #[weak]
@@ -175,6 +227,8 @@ impl ReviewSession {
         ] {
             btn.connect_clicked(glib::clone!(
                 #[strong]
+                queue,
+                #[strong]
                 index,
                 #[strong]
                 on_review,
@@ -182,7 +236,9 @@ impl ReviewSession {
                 refresh,
                 move |_| {
                     let i = index.get();
-                    on_review(i, rating);
+                    if let Some(card_id) = queue.borrow().get(i).and_then(|item| item.card.id) {
+                        on_review(card_id, rating);
+                    }
                     index.set(i + 1);
                     refresh();
                 }
@@ -230,7 +286,7 @@ impl ReviewSession {
         root.add_controller(key_controller);
         root.set_focusable(true);
 
-        Self { root: root.upcast() }
+        Self { root: root.upcast(), append }
     }
 }
 

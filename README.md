@@ -1,24 +1,17 @@
 # LangSpark
 
-A native, offline-first vocabulary application for mastering Japanese through spaced repetition and pronunciation practice. Built in Rust with GTK4, LangSpark combines the effectiveness of scientific memory techniques with real-time speech feedback.
-
-## Overview
-
-LangSpark is designed for language learners who want a focused, distraction-free environment to build their vocabulary. Unlike web-based solutions, LangSpark runs locally on your machine, ensuring your data stays private and responsive.
+A native, offline-first vocabulary application for mastering Japanese through spaced repetition and pronunciation practice. Built in Rust with GTK4, LangSpark runs entirely on your machine — no account, no network dependency beyond the optional downloads below.
 
 ## Features
 
-### Spaced Repetition System
-Harness the proven SM-2 algorithm (or FSRS, selectable in Preferences) to optimize your review schedule. Cards appear precisely when you're most likely to forget them, maximizing retention with minimal effort.
+### Vocabulary
+Browse JMdict/Kanjidic entries grouped by JLPT level, with example sentences (supplemented by the Tatoeba corpus for words JMdict's own examples don't cover). Click an entry for details, pronunciation, and to add it to your study deck.
 
-### Pronunciation Practice
-Speak with confidence. LangSpark integrates VOICEVOX (text-to-speech) and Qwen3-ASR (speech recognition) to provide real-time feedback on your pronunciation. Record yourself, compare against native pronunciation, and receive instant scoring with a per-character diff of what was and wasn't heard.
+### Review
+Your daily queue of cards due for review, one at a time — reveal the answer, then rate it Again/Hard/Good/Easy. Scheduling uses SM-2 or FSRS (selectable in Preferences), so cards resurface right around when you're likely to forget them.
 
-### Comprehensive Dictionary Integration
-Explore JMdict and Kanjidic with detailed readings, meanings, and example sentences (supplemented by the Tatoeba corpus for words JMdict's own examples don't cover). Each entry is just a click away from being added to your study deck.
-
-### Native GTK4 Interface
-Inspired by clean, functional design principles, the LangSpark interface organizes your study into intuitive tabs: Vocabulary browser and Review queue, plus Pronunciation practice once a speech recognition model is installed (see "Speech recognition" below). Keyboard shortcuts make navigation effortless.
+### Pronunciation practice
+Play a reference pronunciation via VOICEVOX, record yourself, and get scored against a Qwen3-ASR transcript — including a per-character diff of what was and wasn't heard. Only appears once a speech recognition model is installed (see "Speech recognition" below).
 
 ## Architecture
 
@@ -123,27 +116,6 @@ The optimized binary is at `target/release/langspark-gui`.
 **macOS**: Install GTK4 via Homebrew: `brew install gtk4 libadwaita`
 
 **Windows**: Install GTK4 via MSYS2 or the official GTK Windows installer.
-
-## Usage
-
-### Adding Vocabulary
-Browse words by JLPT level. Click any entry to view details, listen to pronunciation, and add it to your study deck.
-
-### Review Sessions
-Your daily review queue automatically populates with cards due for review. Rate each card with Again, Hard, Good, or Easy to update the SRS schedule. The system tracks your progress and adjusts intervals based on your performance.
-
-### Pronunciation Practice
-Select a word, click Play to hear the native pronunciation, then record yourself. The system transcribes your attempt, compares it to the expected pronunciation, and provides a score with visual feedback. Try again until you nail it.
-
-## Technical Stack
-
-- **Language**: Rust
-- **UI Framework**: GTK4 with libadwaita
-- **Audio**: CPAL for capture, language-specific TTS engines for synthesis
-- **Speech Recognition**: qwen3_asr_rs (default `asr` feature, needs libtorch)
-- **Database**: SQLite via rusqlite
-- **Async Runtime**: Tokio
-- **Serialization**: Serde
 
 ## Project Structure
 

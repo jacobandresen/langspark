@@ -5,7 +5,7 @@
 //! install) and `mlx` (Apple Silicon only) — neither is guaranteed to be
 //! present, so the default build must not require either. Without the
 //! feature, [`SpeechRecognizer`] reports a clear "unavailable" error instead
-//! of failing to compile, per design.md's graceful-degradation goal.
+//! of failing to compile.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

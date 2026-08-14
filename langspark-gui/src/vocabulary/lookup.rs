@@ -61,7 +61,11 @@ pub fn build(callbacks: AddWordCallbacks, on_added: Rc<dyn Fn(langspark_core::Vo
                     Some(r) if r != &word.word => format!("{}  ({r})", word.word),
                     _ => word.word.clone(),
                 };
-                let row = adw::ActionRow::builder().title(title).subtitle(word.meanings.join("; ")).build();
+                // Capped for the same reason as `vocabulary::dialog`/`books::popup`'s
+                // Meaning row — some JMdict entries (verbs especially) have dozens of
+                // senses, which would otherwise make a single search result dominate
+                // the whole results list.
+                let row = adw::ActionRow::builder().title(title).subtitle(word.meanings.join("; ")).subtitle_lines(2).build();
 
                 let add_btn = gtk4::Button::builder().label("Add").valign(gtk4::Align::Center).build();
                 row.add_suffix(&add_btn);

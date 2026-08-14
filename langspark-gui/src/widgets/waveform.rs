@@ -32,8 +32,8 @@ struct WaveformTrace {
 
 /// A `DrawingArea`-backed widget that renders one or two waveform traces.
 /// Wrapped in a `ScrolledWindow` by the caller for long recordings (smooth
-/// horizontal scrolling, task 18.5) since the drawing area's width simply
-/// grows with sample count rather than being clipped.
+/// horizontal scrolling) since the drawing area's width simply grows with
+/// sample count rather than being clipped.
 #[derive(Clone)]
 pub struct Waveform {
     pub widget: gtk4::Widget,

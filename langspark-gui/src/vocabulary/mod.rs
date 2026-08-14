@@ -170,15 +170,32 @@ pub struct VocabTabCallbacks {
     pub example_lookup: Option<Rc<dyn Fn(&str) -> Vec<langspark_core::ExampleSentence>>>,
 }
 
-/// Build the vocabulary tab's root widget: a search box (plus an "Add Word"
-/// button when `callbacks.add_word` is `Some`, i.e. a dictionary is
-/// installed for the active language) followed by entries grouped by
-/// `level` (falling back to "Uncategorized"), each its own section. All
-/// entries are loaded up front (see `state::AppState`), so search/filter is
-/// done client-side by rebuilding the sections on each keystroke. Words
-/// added via the dictionary lookup dialog, or deleted via a card's detail
-/// dialog, are appended to/dropped from the live list without a full reload.
-pub fn build_tab(entries: &[VocabularyEntry], callbacks: VocabTabCallbacks) -> gtk4::Widget {
+/// The vocabulary tab's root widget, plus its live `append` hook — exposed so
+/// callers elsewhere in the app (currently `books::reader`'s "Add to
+/// Vocabulary" popup) can push a newly-saved word into the *same* on-screen
+/// list this tab renders from, rather than the word only appearing after a
+/// restart. See `build_tab`'s own doc comment for why an in-tab add already
+/// works without this.
+pub struct VocabTab {
+    pub widget: gtk4::Widget,
+    /// Append a newly-persisted entry to the tab's live list and re-render.
+    /// Idempotent to call from anywhere, any number of times — it only ever
+    /// pushes and redraws, matching what `lookup::build`'s own `on_added`
+    /// wiring already does for words added from this tab's "Add Word" button.
+    pub append: Rc<dyn Fn(VocabularyEntry)>,
+}
+
+/// Build the vocabulary tab: a search box (plus an "Add Word" button when
+/// `callbacks.add_word` is `Some`, i.e. a dictionary is installed for the
+/// active language) followed by entries grouped by `level` (falling back to
+/// "Uncategorized"), each its own section. All entries are loaded up front
+/// (see `state::AppState`), so search/filter is done client-side by
+/// rebuilding the sections on each keystroke. Words added via the dictionary
+/// lookup dialog, or deleted via a card's detail dialog, are appended to/
+/// dropped from the live list without a full reload — and the returned
+/// `VocabTab::append` extends that same immediacy to words added from
+/// outside this tab entirely (see `VocabTab`'s doc comment).
+pub fn build_tab(entries: &[VocabularyEntry], callbacks: VocabTabCallbacks) -> VocabTab {
     let VocabTabCallbacks { add_word, on_play, delete, example_lookup } = callbacks;
 
     let root = Box::new(Orientation::Vertical, 12);
@@ -289,7 +306,7 @@ pub fn build_tab(entries: &[VocabularyEntry], callbacks: VocabTabCallbacks) -> g
     }
 
     let scroller = ScrolledWindow::builder().child(&root).vexpand(true).build();
-    scroller.upcast()
+    VocabTab { widget: scroller.upcast(), append }
 }
 
 /// Entries whose word, reading, or meaning contains `query` (case-insensitive).

@@ -50,6 +50,20 @@ bzip2-rs = "0.1"
 # VOICEVOX Engine installer: unpacks the .vvpp (a plain zip) release asset.
 zip = { version = "8", default-features = false, features = ["deflate"] }
 
+# Book installer: parses Aozora Bunko's catalog CSV and decodes its
+# Shift-JIS-encoded text files.
+csv = "1"
+encoding_rs = "0.8"
+
+# Paragraph translation: pure-Rust (no libtorch) Marian-NMT inference for the
+# Helsinki-NLP OPUS-MT ja-en model — deliberately not rust-bert/tch, which
+# would pin a second, conflicting tch/libtorch version alongside the one
+# qwen3-asr-rs below already pins.
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+sentencepiece-rs = "0.2"
+
 # ASR - requires a libtorch install (LIBTORCH env var or system-wide /usr/lib/libtorch.so).
 # Enabled by default; `scripts/setup-asr.sh` (run automatically by `scripts/install.sh`)
 # installs a version-pinned libtorch so this builds out of the box. Build with

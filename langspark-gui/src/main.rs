@@ -7,6 +7,7 @@ use adw::Application as AdwApplication;
 use gtk4::prelude::*;
 
 mod app;
+mod books;
 mod config;
 mod diagnostics;
 mod preferences;
@@ -92,7 +93,7 @@ fn main() -> glib::ExitCode {
 /// display is available, e.g. headless CI without Xvfb.
 #[cfg(test)]
 mod gtk_smoke {
-    use crate::{app, preferences, pronunciation, review, vocabulary, widgets};
+    use crate::{app, books, preferences, pronunciation, review, vocabulary, widgets};
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
@@ -130,6 +131,21 @@ mod gtk_smoke {
         let _pronunciation_tab = pronunciation::PronunciationTab::new(words, pronunciation::tests::noop_callbacks());
 
         let _waveform = widgets::waveform::Waveform::new();
+
+        let book_entry = langspark_core::BookCatalogEntry {
+            id: "1".to_string(),
+            title: "Test Book".to_string(),
+            author: "Test Author".to_string(),
+            genre: None,
+            text_url: "https://example.com/book.zip".to_string(),
+        };
+        let _books_tab = books::build_tab(
+            &[book_entry],
+            books::BooksTabCallbacks { open_book: Rc::new(|_, _, _| {}), reader: books::reader::tests::noop_callbacks() },
+        );
+        let _popup = books::popup::build(&books::popup::tests::sample_entry(), &books::popup::tests::noop_callbacks());
+        let _reader = books::reader::BookReader::new(&books::reader::tests::sample_book(), books::reader::tests::noop_callbacks());
+        let _sentence_popup = books::sentence_popup::build("彼は受け取る。", &books::sentence_popup::tests::noop_callbacks());
 
         let settings = Rc::new(RefCell::new(crate::config::Settings::default()));
         let _prefs_dialog = preferences::build(settings, |_| {});

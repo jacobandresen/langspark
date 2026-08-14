@@ -1,8 +1,7 @@
 //! UI module
 //!
-//! Shared UI helpers. The tabs themselves (vocabulary, kanji, review,
-//! pronunciation, statistics) are top-level sibling modules declared in
-//! `main.rs`, matching design.md's flat `src/<tab>.rs` layout.
+//! Shared UI helpers. The tabs themselves (vocabulary, review, pronunciation)
+//! are top-level sibling modules declared in `main.rs`.
 
 /// Load and register LangSpark's custom CSS (`data/style.css`) for the
 /// default display. Layers on top of libadwaita's default theme, so it must

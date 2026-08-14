@@ -1,9 +1,8 @@
 //! Pronunciation scoring: compares a speech-recognition transcript against
 //! the expected text and produces a score + human-readable feedback.
 //!
-//! Implements Tier 1 (text matching, per design.md's tiered scoring plan) plus
-//! the groundwork for Tier 2 (morae/phoneme segmentation) — full phoneme-level
-//! comparison is tracked as future work (tasks 10.8, 28.2).
+//! Implements Tier 1 (text matching) plus the groundwork for Tier 2 (morae/
+//! phoneme segmentation) — full phoneme-level comparison is future work.
 
 use serde::{Deserialize, Serialize};
 

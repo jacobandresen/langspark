@@ -1,16 +1,16 @@
 //! Application state: opens the SQLite database, wires up repositories and
 //! the language manager, and loads the data each tab needs.
 //!
-//! Real-time language switching mid-session is an explicit non-goal (see
-//! design.md), so `AppState` is built once per run for the language chosen
-//! in Preferences at last save — switching languages takes effect on restart.
+//! Real-time language switching mid-session is an explicit non-goal, so
+//! `AppState` is built once per run for the language chosen in Preferences
+//! at last save — switching languages takes effect on restart.
 
 use langspark_core::{
     default_migrations, initialize_schema, run_migrations, Database, Language, LanguageManager,
     SqliteKanjiRepository, SqliteSrsRepository, SqliteVocabularyRepository,
 };
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub struct AppState {
     pub language_manager: LanguageManager,
@@ -21,6 +21,13 @@ pub struct AppState {
     /// `AppDirs::dictionaries_dir`) if a matching `<code>.json` file exists.
     /// Empty (nothing loaded) if no dictionary has been installed yet.
     pub dictionary: langspark_core::DictionaryManager,
+    /// The paragraph translation model, loaded lazily on the first
+    /// translation request (loading its ~300MB of weights takes a few
+    /// seconds — not worth paying at every startup, especially for users who
+    /// never open the Books tab) and kept resident for the rest of the
+    /// session after that. `None` once initialized means no model is
+    /// installed; the outer `OnceLock` being empty means "not yet attempted".
+    pub translator: Arc<OnceLock<Option<Mutex<langspark_core::Translator>>>>,
 }
 
 impl AppState {
@@ -63,6 +70,7 @@ impl AppState {
             kanji_repo: SqliteKanjiRepository::new(db.clone()),
             srs_repo: SqliteSrsRepository::new(db),
             dictionary,
+            translator: Arc::new(OnceLock::new()),
         })
     }
 

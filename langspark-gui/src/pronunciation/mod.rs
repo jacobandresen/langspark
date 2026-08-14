@@ -5,8 +5,7 @@
 //! directly, since the concrete backends (`VoicevoxTts`, `AudioRecorder`,
 //! `PronunciationScorer`) need a running VOICEVOX Engine, a microphone, and
 //! installed voice models respectively — resources this widget shouldn't
-//! assume are present. `app.rs` wires the real backends in once language/
-//! model setup (section 24) is in place.
+//! assume are present. `app.rs` wires the real backends in.
 
 use crate::task;
 use crate::widgets::waveform::{Waveform, WaveformColor};
@@ -204,6 +203,7 @@ impl PronunciationTab {
         let word_label = Label::builder().css_classes(["title-1"]).build();
         let nav_box = GtkBox::new(Orientation::Horizontal, 8);
         nav_box.set_halign(gtk4::Align::Center);
+        nav_box.set_css_classes(&["langspark-word-card"]);
         let prev_btn = gtk4::Button::from_icon_name("go-previous-symbolic");
         let next_btn = gtk4::Button::from_icon_name("go-next-symbolic");
         let play_btn = gtk4::Button::builder().label("▶ Play").css_classes(["suggested-action"]).build();
@@ -219,16 +219,37 @@ impl PronunciationTab {
         nav_box.append(&word_label);
         nav_box.append(&next_btn);
 
-        let action_box = GtkBox::new(Orientation::Horizontal, 8);
+        // Two visually separated groups rather than one uniform row: Play/
+        // Record are the actual practice actions (already color-coded blue/
+        // red), Test Mic/Replay are diagnostic ones a user reaches for far
+        // less often.
+        let action_box = GtkBox::new(Orientation::Horizontal, 24);
         action_box.set_halign(gtk4::Align::Center);
-        action_box.append(&play_btn);
-        action_box.append(&record_btn);
-        action_box.append(&test_mic_btn);
-        action_box.append(&replay_mic_btn);
+        let primary_actions = GtkBox::new(Orientation::Horizontal, 8);
+        primary_actions.append(&play_btn);
+        primary_actions.append(&record_btn);
+        let secondary_actions = GtkBox::new(Orientation::Horizontal, 8);
+        secondary_actions.append(&test_mic_btn);
+        secondary_actions.append(&replay_mic_btn);
+        action_box.append(&primary_actions);
+        action_box.append(&secondary_actions);
 
         let record_progress = gtk4::ProgressBar::builder().visible(false).show_text(false).build();
 
+        // The waveform widget renders as an empty rectangle until it has
+        // samples to draw — kept hidden (with this hint shown instead) until
+        // the first successful Play/Record/Test Mic populates it.
         let waveform = Waveform::new();
+        waveform.widget.set_visible(false);
+        let waveform_hint = Label::builder()
+            .label("Press Play to hear the reference pronunciation, then Record to try it yourself.")
+            .css_classes(["dim-label"])
+            .wrap(true)
+            .justify(gtk4::Justification::Center)
+            .halign(gtk4::Align::Center)
+            .margin_top(24)
+            .margin_bottom(24)
+            .build();
         let score_label = Label::builder().css_classes(["title-2"]).build();
         let diff_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
@@ -241,13 +262,31 @@ impl PronunciationTab {
             .build();
         let feedback_label = Label::builder().wrap(true).justify(gtk4::Justification::Center).build();
 
+        // Grouped into one card, shown only once there's an actual result —
+        // otherwise this is just dead vertical space below the waveform on
+        // every word until the first attempt.
+        let results_card = GtkBox::new(Orientation::Vertical, 8);
+        results_card.set_halign(gtk4::Align::Center);
+        results_card.set_css_classes(&["langspark-results-card"]);
+        results_card.set_visible(false);
+        results_card.append(&score_label);
+        results_card.append(&diff_box);
+        results_card.append(&feedback_label);
+        feedback_label.connect_notify_local(
+            Some("label"),
+            glib::clone!(
+                #[weak]
+                results_card,
+                move |label, _| results_card.set_visible(!label.label().is_empty())
+            ),
+        );
+
         root.append(&nav_box);
         root.append(&action_box);
         root.append(&record_progress);
         root.append(&waveform.widget);
-        root.append(&score_label);
-        root.append(&diff_box);
-        root.append(&feedback_label);
+        root.append(&waveform_hint);
+        root.append(&results_card);
 
         let words = Rc::new(words);
         let index = Rc::new(Cell::new(0usize));
@@ -263,6 +302,8 @@ impl PronunciationTab {
             let score_label = score_label.clone();
             let diff_box = diff_box.clone();
             let feedback_label = feedback_label.clone();
+            let waveform = waveform.clone();
+            let waveform_hint = waveform_hint.clone();
             move || {
                 let i = index.get();
                 if let Some(word) = words.get(i) {
@@ -273,6 +314,8 @@ impl PronunciationTab {
                 score_label.set_label("");
                 render_diff(&diff_box, &[]);
                 feedback_label.set_label("");
+                waveform.widget.set_visible(false);
+                waveform_hint.set_visible(true);
             }
         };
         refresh();
@@ -319,6 +362,8 @@ impl PronunciationTab {
             #[strong]
             waveform,
             #[weak]
+            waveform_hint,
+            #[weak]
             feedback_label,
             #[weak]
             play_btn,
@@ -349,6 +394,8 @@ impl PronunciationTab {
                             if let Ok((samples, _rate)) = langspark_core::audio::decode_wav(&wav) {
                                 let downsampled = langspark_core::audio::extract_waveform(&samples, 200);
                                 waveform.set_samples(downsampled, WaveformColor::REFERENCE);
+                                waveform.widget.set_visible(true);
+                                waveform_hint.set_visible(false);
                             }
                             let play_result = task::run_blocking(move || (callbacks.play)(wav)).await;
                             if let Err(e) = play_result {
@@ -373,6 +420,8 @@ impl PronunciationTab {
             callbacks,
             #[strong]
             waveform,
+            #[weak]
+            waveform_hint,
             #[weak]
             score_label,
             #[weak]
@@ -424,6 +473,8 @@ impl PronunciationTab {
 
                     let downsampled = langspark_core::audio::extract_waveform(&samples, 200);
                     waveform.set_samples(downsampled, WaveformColor::USER);
+                    waveform.widget.set_visible(true);
+                    waveform_hint.set_visible(false);
 
                     if langspark_core::audio::peak_level(&samples) < SILENCE_THRESHOLD {
                         render_diff(&diff_box, &[]);
@@ -475,6 +526,8 @@ impl PronunciationTab {
             #[strong]
             waveform,
             #[weak]
+            waveform_hint,
+            #[weak]
             feedback_label,
             #[weak]
             record_progress,
@@ -512,6 +565,8 @@ impl PronunciationTab {
                         Ok((samples, rate)) => {
                             let downsampled = langspark_core::audio::extract_waveform(&samples, 200);
                             waveform.set_samples(downsampled, WaveformColor::USER);
+                            waveform.widget.set_visible(true);
+                            waveform_hint.set_visible(false);
                             let peak = langspark_core::audio::peak_level(&samples);
                             if peak < SILENCE_THRESHOLD {
                                 feedback_label.set_label(

@@ -13,6 +13,8 @@ pub struct Settings {
     pub active_language: String,
     /// Override for where dictionary JSON files are read from
     pub dictionary_data_dir: Option<PathBuf>,
+    /// Override for where the book catalog and cached book text are read from
+    pub books_data_dir: Option<PathBuf>,
     /// VOICEVOX speaker/style ID string for Japanese TTS
     pub tts_voice_ja: String,
     /// "sm2" or "fsrs"
@@ -31,6 +33,7 @@ impl Default for Settings {
         Self {
             active_language: "ja".to_string(),
             dictionary_data_dir: None,
+            books_data_dir: None,
             tts_voice_ja: "zundamon".to_string(),
             srs_algorithm: "sm2".to_string(),
             starting_ease_factor: 2.5,
@@ -73,6 +76,9 @@ impl Settings {
         if let Ok(v) = std::env::var("LANGSPARK_DICTIONARY_DATA_DIR") {
             self.dictionary_data_dir = Some(PathBuf::from(v));
         }
+        if let Ok(v) = std::env::var("LANGSPARK_BOOKS_DATA_DIR") {
+            self.books_data_dir = Some(PathBuf::from(v));
+        }
         if let Ok(v) = std::env::var("LANGSPARK_TTS_VOICE_JA") {
             self.tts_voice_ja = v;
         }
@@ -82,8 +88,8 @@ impl Settings {
     }
 }
 
-/// XDG-standard application directories (config, data, cache), following the
-/// layout documented in design.md's "Data Locations" section.
+/// XDG-standard application directories (config, data, cache) — see
+/// README.md's "Project Structure" section for the resulting paths.
 pub struct AppDirs {
     dirs: ProjectDirs,
 }
@@ -107,8 +113,28 @@ impl AppDirs {
         self.dirs.data_dir().join("dictionaries")
     }
 
+    /// Where the Aozora Bunko book catalog (`catalog.json`) and each opened
+    /// book's parsed/cached text (`<work id>.json`) live — see
+    /// `langspark_core::install_aozora_catalog`/`fetch_book`.
+    pub fn books_dir(&self) -> PathBuf {
+        self.dirs.data_dir().join("books")
+    }
+
     pub fn audio_cache_dir(&self) -> PathBuf {
         self.dirs.cache_dir().join("audio")
+    }
+
+    /// Where the Helsinki-NLP OPUS-MT ja-en translation model
+    /// (`config.json`, `pytorch_model.bin`, `source.spm`, `target.spm`)
+    /// lives — see `langspark_core::install_translation_model`.
+    pub fn translation_model_dir(&self) -> PathBuf {
+        self.dirs.data_dir().join("translation_model")
+    }
+
+    /// Where translated paragraphs are cached, keyed by a hash of the
+    /// source text — see `langspark_core::TranslationCache`.
+    pub fn translation_cache_dir(&self) -> PathBuf {
+        self.dirs.cache_dir().join("translations")
     }
 
     /// Where a `qwen3` ASR model directory (`config.json`, `model.safetensors`,
@@ -197,6 +223,23 @@ mod tests {
             assert!(dirs.dictionaries_dir().ends_with("dictionaries"));
             assert!(dirs.audio_cache_dir().ends_with("audio"));
             assert!(dirs.asr_model_dir("ja").ends_with("asr/ja"));
+            assert!(dirs.books_dir().ends_with("books"));
+            assert!(dirs.translation_model_dir().ends_with("translation_model"));
+            assert!(dirs.translation_cache_dir().ends_with("translations"));
         }
+    }
+
+    #[test]
+    fn test_books_data_dir_save_and_load_roundtrip() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let mut settings = Settings::default();
+        settings.books_data_dir = Some(PathBuf::from("/custom/books"));
+        settings.save(&path).unwrap();
+
+        let loaded = Settings::load(&path).unwrap();
+        assert_eq!(loaded.books_data_dir, Some(PathBuf::from("/custom/books")));
     }
 }

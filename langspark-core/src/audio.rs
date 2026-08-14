@@ -281,15 +281,15 @@ pub fn peak_level(samples: &[f32]) -> f32 {
 }
 
 /// Whether the system has usable (input device, output device) audio
-/// hardware, for startup dependency checks (task 22.4). Never errors — a
-/// missing device is a normal, checkable condition, not a failure.
+/// hardware, for startup dependency checks. Never errors — a missing device
+/// is a normal, checkable condition, not a failure.
 pub fn audio_devices_available() -> (bool, bool) {
     let host = cpal::default_host();
     (host.default_input_device().is_some(), host.default_output_device().is_some())
 }
 
-/// Names of all available (input devices, output devices), for a device
-/// picker in Preferences (task 19.8). Devices with unreadable names are skipped.
+/// Names of all available (input devices, output devices), for the device
+/// picker in Preferences. Devices with unreadable names are skipped.
 pub fn list_audio_devices() -> (Vec<String>, Vec<String>) {
     let host = cpal::default_host();
     let inputs = host.input_devices().map(|it| it.filter_map(|d| d.name().ok()).collect()).unwrap_or_default();

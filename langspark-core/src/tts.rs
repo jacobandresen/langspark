@@ -12,7 +12,7 @@ pub trait TtsBackend {
 
 /// A `TtsBackend` that always fails, used when a language's voice model
 /// hasn't been installed yet so the rest of the app can degrade gracefully
-/// instead of crashing (see design.md "Offline Model Download" risk).
+/// instead of crashing.
 pub struct UnavailableTts {
     reason: String,
 }

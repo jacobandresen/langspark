@@ -5,7 +5,7 @@ use std::path::Path;
 
 /// A single startup issue found by [`check_dependencies`] — missing hardware
 /// or an uninstalled language resource. Non-fatal: the app should still
-/// launch and show these as warnings (graceful degradation, per design.md).
+/// launch and show these as warnings rather than refusing to start.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyIssue {
     pub message: String,
@@ -43,7 +43,7 @@ pub fn check_dependencies(language: Language, dict_dir: &Path) -> Vec<Dependency
 }
 
 /// Show a dismissible error toast in a window that has an `adw::ToastOverlay`
-/// (see `app::build_main_window`), per task 22.3.
+/// (see `app::build_main_window`).
 pub fn show_error_toast(overlay: &adw::ToastOverlay, message: &str) {
     let toast = adw::Toast::builder().title(message).timeout(5).build();
     overlay.add_toast(toast);
