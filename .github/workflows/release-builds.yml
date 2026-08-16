@@ -137,17 +137,43 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ github.event.release.tag_name }}" LangSpark-windows-x64.msi --clobber
 
-  linux-deb:
+  # Split into a containerized build job + a plain-runner release job (rather
+  # than one job) because of what the container is for: this crate's `gtk4`
+  # dependency is built with the `gnome_49` feature, which needs GLib >=2.86
+  # — not available via apt on `ubuntu-latest` (currently 24.04 "noble",
+  # which ships 2.80; confirmed by an actual failed build here: pkg-config
+  # reported "Package 'glib-2.0' has version '2.80.0', required version is
+  # '>= 2.86'"). Only Ubuntu 25.10 "questing" has it. A plain `ubuntu:25.10`
+  # container has no `gh` CLI preinstalled (unlike the actual GitHub-hosted
+  # runner image), so uploading to the release happens in a second job on
+  # the normal runner instead of fighting to install `gh` inside the
+  # container too.
+  #
+  # Practical consequence worth knowing: the built .deb's auto-computed
+  # `Depends:` (see langspark-gui/Cargo.toml's `depends = "$auto"`) will
+  # require GLib/GTK4/libadwaita versions matching what it was built
+  # against — currently only satisfiable on similarly recent distros (Ubuntu
+  # 25.10+), not older LTS releases or current Debian stable, until either
+  # this project drops `gnome_49` or those distros catch up.
+  linux-deb-build:
     runs-on: ubuntu-latest
+    container:
+      image: ubuntu:25.10
     steps:
-      - uses: actions/checkout@v4
-
-      # Same package list as scripts/install.sh's install_dependencies(),
-      # minus Docker (not needed to build).
-      - name: Install system build dependencies
+      # A bare `ubuntu:25.10` image has none of this preinstalled (unlike
+      # the host runner image `actions/checkout`/`dtolnay/rust-toolchain`
+      # normally rely on) — git for checkout, curl/ca-certificates for the
+      # rust-toolchain action's download, the rest matching
+      # scripts/install.sh's install_dependencies() (minus Docker, not
+      # needed to build).
+      - name: Install container + build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config cmake libgtk-4-dev libadwaita-1-dev libasound2-dev
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git curl ca-certificates \
+            build-essential pkg-config cmake libgtk-4-dev libadwaita-1-dev libasound2-dev
+
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -157,8 +183,21 @@ jobs:
       - name: Build .deb
         run: cargo deb -p langspark-gui -- --no-default-features
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: langspark-deb
+          path: target/debian/*.deb
+
+  linux-deb-release:
+    needs: linux-deb-build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: langspark-deb
+
       - name: Attach to release
-        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" target/debian/*.deb --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" *.deb --clobber
