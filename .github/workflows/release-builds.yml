@@ -182,12 +182,14 @@ jobs:
   # the normal runner instead of fighting to install `gh` inside the
   # container too.
   #
-  # Practical consequence worth knowing: the built .deb's auto-computed
-  # `Depends:` (see langspark-gui/Cargo.toml's `depends = "$auto"`) will
-  # require GLib/GTK4/libadwaita versions matching what it was built
-  # against — currently only satisfiable on similarly recent distros (Ubuntu
-  # 25.10+), not older LTS releases or current Debian stable, until either
-  # this project drops `gnome_49` or those distros catch up.
+  # This only affects the *build* environment, not installability: the
+  # built .deb's auto-computed `Depends:` (see langspark-gui/Cargo.toml's
+  # `depends = "$auto"`) reflects the actual GLib/GTK4/libadwaita symbols
+  # referenced, not the pkg-config version gate used to compile — confirmed
+  # via a real build: `libglib2.0-0t64 (>= 2.54.0)`, `libgtk-4-1 (>=
+  # 4.12.0)`, `libadwaita-1-0 (>= 1.5~beta)`, well below what Ubuntu 25.10
+  # itself ships, so the package installs on a much broader range of
+  # current distros than the build requirement alone would suggest.
   linux-deb-build:
     runs-on: ubuntu-latest
     container:
