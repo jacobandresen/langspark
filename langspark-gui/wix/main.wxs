@@ -26,8 +26,8 @@
   from whatever is actually in `dist\*.dll` at build time (see that job's
   "Generate WiX DLL component list" step) — cargo-wix auto-includes every
   `.wxs` file found in this `wix\` directory, so it's picked up with no
-  extra `--include` flag. `harvested.wxs` is build output, not checked in
-  (see `.gitignore`).
+  extra "include" flag on the command line. `harvested.wxs` is build
+  output, not checked in (see `.gitignore`).
 -->
 
 <?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
