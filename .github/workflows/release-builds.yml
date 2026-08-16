@@ -1,27 +1,38 @@
 name: Release builds
 
 # Builds installable packages and attaches them to a GitHub Release:
-#   - windows:   langspark-gui.exe + its GTK4/libadwaita DLLs, zipped
+#   - windows:   langspark-gui.exe + its GTK4/libadwaita DLLs, packaged as a
+#                real .msi installer via cargo-wix (see wix/main.wxs)
 #   - linux-deb: a .deb for Debian/Ubuntu (via cargo-deb)
 #
 # Both build with --no-default-features, i.e. without the `asr` speech
-# recognition feature: that needs libtorch, which is fragile to wire up
-# reliably in CI (large downloads, DLL/rpath issues) compared to the rest of
-# the build. A build without ASR still runs everything except the
+# recognition feature: that needs libtorch, which dynamically links as a hard
+# runtime dependency with no baked-in path (confirmed via `ldd`/`readelf` on a
+# built binary — reliably bundling that into a package is its own project, not
+# attempted here). A build without ASR still runs everything except the
 # Pronunciation tab (which only appears once a speech recognition model is
-# installed — see app.rs::asr_model_installed); VOICEVOX playback,
-# vocabulary, review, and the SRS engine are unaffected. See README.md's
-# "Speech recognition" section, or scripts/install.sh, for a from-source
-# build that includes it.
+# installed — see app.rs::asr_model_installed, and preferences.rs's
+# `#[cfg(feature = "asr")]`-gated install row, which is compiled out
+# entirely in these builds so there's nothing there that could mislead a user
+# into installing a model that can't work); VOICEVOX playback, vocabulary,
+# review, paragraph translation, and the SRS engine are unaffected. See
+# README.md's "Speech recognition" section, or scripts/install.sh, for a
+# from-source build that includes ASR.
 #
-# Runs only when a GitHub Release is published — not on every push/PR, to
-# keep this off the critical path (and the Actions minutes bill) for normal
-# development. Add `push`/`pull_request`/`workflow_dispatch` triggers below
-# if you also want on-demand or every-commit builds.
+# Every other in-app "Preferences -> Study -> Language Installation" download
+# (dictionary, Tatoeba examples, VOICEVOX Engine, book catalog, paragraph
+# translation) is a plain HTTP download with no subprocess/script involved —
+# see langspark-core/src/installer.rs.
+#
+# Runs when a GitHub Release is published (the real release build, uploaded
+# to that release) or manually via workflow_dispatch (for iterating on CI
+# changes without publishing a release — builds and packages but skips the
+# upload step, see each job's "Attach to release" `if:` condition).
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write # needed to attach build artifacts to the release below
@@ -58,38 +69,146 @@ jobs:
       # GTK apps on Windows need their DLLs alongside the .exe (no
       # system-wide GTK the way Linux distros have) — ntldd walks the full
       # dependency tree, not just direct links, and we only pull in the ones
-      # MSYS2 actually installed (ucrt64\bin), not Windows system DLLs.
+      # MSYS2 actually installed (ucrt64), not Windows system DLLs.
+      #
+      # This step previously piped straight from `ntldd` through
+      # `grep -i '/ucrt64/bin/' | awk '{print $3}' | xargs` with no
+      # intermediate file — confirmed broken by an actual CI run (failed in
+      # ~1.5s with zero output on either stream, consistent with `grep`
+      # matching nothing under `pipefail` and the whole pipeline dying
+      # silently as a result; this workflow had never actually run before
+      # the model-assets-v1 release first triggered it). Writing ntldd's raw
+      # output to a file first (and printing it) means a future format
+      # mismatch shows up as visible diagnostic output instead of a bare
+      # "exit code 1" again. Matching is a substring search for "ucrt64" in
+      # any `.dll`-ending whitespace-delimited token — deliberately not
+      # anchored to a specific path shape (`/ucrt64/bin/...` vs
+      # `C:\msys64\ucrt64\bin\...` vs some other separator/casing ntldd
+      # happens to print) since that exact shape is what broke the original
+      # version.
       - name: Collect runtime DLLs
         run: |
           mkdir -p dist
           cp target/release/langspark-gui.exe dist/
           cp -r langspark-gui/data dist/
-          ntldd -R target/release/langspark-gui.exe \
-            | grep -i '/ucrt64/bin/' \
-            | awk '{print $3}' \
-            | sort -u \
-            | xargs -I{} cp -u {} dist/
 
-      - name: Zip
-        run: cd dist && 7z a -r ../LangSpark-windows-x64.zip .
+          ntldd -R target/release/langspark-gui.exe > /tmp/ntldd-raw.txt 2>&1 || true
+          echo "--- raw ntldd output ---"
+          cat /tmp/ntldd-raw.txt
+          echo "--- end raw ntldd output ---"
+
+          grep -ioE '[^[:space:]]*ucrt64[^[:space:]]*\.dll' /tmp/ntldd-raw.txt \
+            | sort -u -f > /tmp/dll-paths.txt || true
+          echo "--- matched DLL paths ---"
+          cat /tmp/dll-paths.txt
+
+          while IFS= read -r f; do
+            [ -f "$f" ] && cp -u "$f" dist/
+          done < /tmp/dll-paths.txt
+
+          echo "--- dist/ contents ---"
+          ls -la dist/
+
+      # langspark-gui/wix/main.wxs references a `DistFiles` ComponentGroup
+      # for every DLL in `dist/` (see that file's header comment for why
+      # this isn't hand-maintained: MSYS2's GTK4/libadwaita package set —
+      # and so the DLL list `ntldd` reports above — changes over time).
+      # cargo-wix auto-includes every `.wxs` file it finds under the
+      # package's `wix/` directory, so writing this there is enough to pull
+      # it into the build with no extra `--include` flag. Source paths are
+      # absolute (via $GITHUB_WORKSPACE, which GitHub Actions always sets)
+      # rather than relative to `dist/`, matching main.wxs's own paths — see
+      # its header comment for why.
+      - name: Generate WiX DLL component list
+        run: |
+          {
+            echo "<?xml version='1.0' encoding='windows-1252'?>"
+            echo "<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>"
+            echo "  <Fragment>"
+            echo "    <DirectoryRef Id='APPLICATIONFOLDER'>"
+            for f in dist/*.dll; do
+              name=$(basename "$f")
+              id=$(echo "$name" | sed -E 's/[^A-Za-z0-9_.]/_/g')
+              case "$id" in [0-9]*) id="_$id" ;; esac
+              echo "      <Component Id='Dll_${id}' Guid='*'>"
+              echo "        <File Id='DllFile_${id}' Name='${name}' DiskId='1' Source='\$(env.GITHUB_WORKSPACE)\\dist\\${name}' KeyPath='yes'/>"
+              echo "      </Component>"
+            done
+            echo "    </DirectoryRef>"
+            echo "    <ComponentGroup Id='DistFiles'>"
+            for f in dist/*.dll; do
+              name=$(basename "$f")
+              id=$(echo "$name" | sed -E 's/[^A-Za-z0-9_.]/_/g')
+              case "$id" in [0-9]*) id="_$id" ;; esac
+              echo "      <ComponentRef Id='Dll_${id}'/>"
+            done
+            echo "    </ComponentGroup>"
+            echo "  </Fragment>"
+            echo "</Wix>"
+          } > langspark-gui/wix/harvested.wxs
+
+      - name: Install cargo-wix
+        run: cargo install cargo-wix --locked
+
+      # `--no-build`: reuse the binary already built above (and the `dist/`
+      # layout assembled from it) instead of cargo-wix triggering its own
+      # `cargo build --release` — wix/main.wxs's <File Source> paths point at
+      # `dist\...` directly rather than cargo-wix's usual
+      # `$(var.CargoTargetBinDir)` (see that file's header comment).
+      - name: Build .msi
+        run: cargo wix --no-build --nocapture -p langspark-gui -o LangSpark-windows-x64.msi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: langspark-msi
+          path: LangSpark-windows-x64.msi
 
       - name: Attach to release
+        if: github.event_name == 'release'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" LangSpark-windows-x64.zip --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" LangSpark-windows-x64.msi --clobber
 
-  linux-deb:
+  # Split into a containerized build job + a plain-runner release job (rather
+  # than one job) because of what the container is for: this crate's `gtk4`
+  # dependency is built with the `gnome_49` feature, which needs GLib >=2.86
+  # — not available via apt on `ubuntu-latest` (currently 24.04 "noble",
+  # which ships 2.80; confirmed by an actual failed build here: pkg-config
+  # reported "Package 'glib-2.0' has version '2.80.0', required version is
+  # '>= 2.86'"). Only Ubuntu 25.10 "questing" has it. A plain `ubuntu:25.10`
+  # container has no `gh` CLI preinstalled (unlike the actual GitHub-hosted
+  # runner image), so uploading to the release happens in a second job on
+  # the normal runner instead of fighting to install `gh` inside the
+  # container too.
+  #
+  # This only affects the *build* environment, not installability: the
+  # built .deb's auto-computed `Depends:` (see langspark-gui/Cargo.toml's
+  # `depends = "$auto"`) reflects the actual GLib/GTK4/libadwaita symbols
+  # referenced, not the pkg-config version gate used to compile — confirmed
+  # via a real build: `libglib2.0-0t64 (>= 2.54.0)`, `libgtk-4-1 (>=
+  # 4.12.0)`, `libadwaita-1-0 (>= 1.5~beta)`, well below what Ubuntu 25.10
+  # itself ships, so the package installs on a much broader range of
+  # current distros than the build requirement alone would suggest.
+  linux-deb-build:
     runs-on: ubuntu-latest
+    container:
+      image: ubuntu:25.10
     steps:
-      - uses: actions/checkout@v4
-
-      # Same package list as scripts/install.sh's install_dependencies(),
-      # minus Docker (not needed to build).
-      - name: Install system build dependencies
+      # A bare `ubuntu:25.10` image has none of this preinstalled (unlike
+      # the host runner image `actions/checkout`/`dtolnay/rust-toolchain`
+      # normally rely on) — git for checkout, curl/ca-certificates for the
+      # rust-toolchain action's download, the rest matching
+      # scripts/install.sh's install_dependencies() (minus Docker, not
+      # needed to build).
+      - name: Install container + build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config cmake libgtk-4-dev libadwaita-1-dev libasound2-dev
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git curl ca-certificates \
+            build-essential pkg-config cmake libgtk-4-dev libadwaita-1-dev libasound2-dev
+
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -99,7 +218,21 @@ jobs:
       - name: Build .deb
         run: cargo deb -p langspark-gui -- --no-default-features
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: langspark-deb
+          path: target/debian/*.deb
+
+  linux-deb-release:
+    needs: linux-deb-build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: langspark-deb
+
       - name: Attach to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" target/debian/*.deb --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" *.deb --clobber

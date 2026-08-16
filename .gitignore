@@ -22,6 +22,13 @@ Thumbs.db
 
 # Build artifacts
 target/
+dist/
+*.msi
+
+# CI-generated (see .github/workflows/release-builds.yml's "Generate WiX
+# DLL component list" step, and langspark-gui/wix/main.wxs's header comment
+# for why)
+/langspark-gui/wix/harvested.wxs
 
 # Environment
 .env

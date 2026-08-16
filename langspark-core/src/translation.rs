@@ -11,10 +11,11 @@
 //! [`candle_transformers::models::marian::Config`], and its SentencePiece
 //! tokenizer files (`source.spm`/`target.spm`) are loaded directly via the
 //! pure-Rust `sentencepiece-rs` crate rather than needing the "fast
-//! tokenizer" JSON conversion candle's own example script uses. Its weights
-//! (`pytorch_model.bin`) *do* need a one-time conversion though — see
-//! `installer::install_translation_model`'s doc comment for why — to the
-//! `model.safetensors` this loads from below.
+//! tokenizer" JSON conversion candle's own example script uses. Its
+//! upstream weights (`pytorch_model.bin`) do need a one-time conversion to
+//! the `model.safetensors` this loads from below — see
+//! `installer::TRANSLATION_MODEL_WEIGHTS_URL`'s doc comment for why, and
+//! why that conversion happens once ourselves rather than at install time.
 //!
 //! One real subtlety this needed working out empirically (garbage
 //! translations until fixed): a raw SentencePiece model's own internal

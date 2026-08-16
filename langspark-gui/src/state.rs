@@ -28,6 +28,13 @@ pub struct AppState {
     /// session after that. `None` once initialized means no model is
     /// installed; the outer `OnceLock` being empty means "not yet attempted".
     pub translator: Arc<OnceLock<Option<Mutex<langspark_core::Translator>>>>,
+    /// The speech-recognition model for the active language, loaded lazily on
+    /// the first transcription request and kept resident for the rest of the
+    /// session after that — same rationale as `translator` above, and for
+    /// the same reason: `SpeechRecognizer::new` reloads the model's weights
+    /// from disk, which previously happened on *every* Record press in the
+    /// Pronunciation tab instead of once per session.
+    pub recognizer: Arc<OnceLock<Option<Mutex<langspark_core::SpeechRecognizer>>>>,
 }
 
 impl AppState {
@@ -71,6 +78,7 @@ impl AppState {
             srs_repo: SqliteSrsRepository::new(db),
             dictionary,
             translator: Arc::new(OnceLock::new()),
+            recognizer: Arc::new(OnceLock::new()),
         })
     }
 
