@@ -13,6 +13,17 @@ Your daily queue of cards due for review, one at a time — reveal the answer, t
 ### Pronunciation practice
 Play a reference pronunciation via VOICEVOX, record yourself, and get scored against a Qwen3-ASR transcript — including a per-character diff of what was and wasn't heard. Only appears once a speech recognition model is installed (see "Speech recognition" below).
 
+## Installation
+
+Prebuilt packages are attached to each [GitHub Release](https://github.com/jacobandresen/langspark/releases):
+
+- **Linux**: download the `.deb` and install it with `sudo apt install ./langspark_*.deb` (or `dpkg -i`) — all runtime dependencies (GTK4, libadwaita, ALSA, ...) are pulled in automatically via `apt`.
+- **Windows**: download and run the `.msi` installer.
+
+Everything else — the Japanese dictionary, VOICEVOX (Japanese TTS), the paragraph translation model, and book catalog — installs from inside the app itself: Preferences → Study → Language Installation, or Preferences → Books. No extra scripts or manual downloads needed.
+
+These release packages don't include speech recognition (Pronunciation practice's transcription/scoring): that needs libtorch, a large dynamically-linked runtime dependency that isn't yet reliably bundleable into the release packages (see "Speech recognition" below). Everything else — vocabulary, review, TTS playback, paragraph translation, books — works fully. Building from source with the `asr` feature (see "Running from source" below) is currently the only way to get Pronunciation practice's transcription step.
+
 ## Architecture
 
 LangSpark is built as a Rust workspace with two main crates:
@@ -30,7 +41,7 @@ Japanese only, for now.
 |----------|------------|------------|-------------------|
 | Japanese | JMdict, Kanjidic (`scriptin/jmdict-simplified` JSON format) | [VOICEVOX Engine](https://voicevox.hiroshiba.jp/) (spoken to over its local HTTP API) | qwen3_asr_rs |
 
-**Speech recognition** (`qwen3_asr_rs`) is a *default* Cargo feature (`asr`), but its only backends are `tch` (needs a system-wide libtorch install) and `mlx` (Apple Silicon only) — so building it requires libtorch to actually be present. `./scripts/install.sh` sets this up automatically as part of a full install (see below); for day-to-day `cargo build`/`cargo run` during development, run `./scripts/setup-asr.sh` once, then export the `LIBTORCH`/`LD_LIBRARY_PATH` it prints in every shell you build or run from (libtorch is dynamically linked, so both build time *and* runtime need it). Without libtorch available, build with `--no-default-features` — `SpeechRecognizer::transcribe` then reports a clear "unavailable" error instead of failing to compile. libtorch is only needed to *build*, though — once a binary has the `asr` feature compiled in, the model itself (weights + tokenizer) can be fetched from Preferences → Study → Language Installation instead of re-running the script (see `langspark_core::install_asr_model`); the Pronunciation tab only appears once that model is actually present.
+**Speech recognition** (`qwen3_asr_rs`) is a *default* Cargo feature (`asr`), but its only backends are `tch` (needs a system-wide libtorch install) and `mlx` (Apple Silicon only) — so building it requires libtorch to actually be present. `./scripts/install.sh` sets this up automatically as part of a full install (see below); for day-to-day `cargo build`/`cargo run` during development, run `./scripts/setup-asr.sh` once, then export the `LIBTORCH`/`LD_LIBRARY_PATH` it prints in every shell you build or run from (libtorch is dynamically linked, so both build time *and* runtime need it). Without libtorch available, build with `--no-default-features` — `SpeechRecognizer::transcribe` then reports a clear "unavailable" error instead of failing to compile, and Preferences hides the speech-recognition model install row entirely (it's compiled out via `#[cfg(feature = "asr")]`, since installing a model there couldn't do anything useful). Once you have a binary with the `asr` feature compiled in and libtorch still reachable via `LD_LIBRARY_PATH` (or an install.sh-built binary's baked-in rpath), the model itself (weights + tokenizer) can be fetched from Preferences → Study → Language Installation instead of re-running the script (see `langspark_core::install_asr_model`); the Pronunciation tab only appears once that model is actually present. The official release builds (see "Building a release binary" below) are `--no-default-features`, so Pronunciation practice is currently a from-source-only feature.
 
 ## Getting Started
 

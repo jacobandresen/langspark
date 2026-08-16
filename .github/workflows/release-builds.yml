@@ -1,27 +1,38 @@
 name: Release builds
 
 # Builds installable packages and attaches them to a GitHub Release:
-#   - windows:   langspark-gui.exe + its GTK4/libadwaita DLLs, zipped
+#   - windows:   langspark-gui.exe + its GTK4/libadwaita DLLs, packaged as a
+#                real .msi installer via cargo-wix (see wix/main.wxs)
 #   - linux-deb: a .deb for Debian/Ubuntu (via cargo-deb)
 #
 # Both build with --no-default-features, i.e. without the `asr` speech
-# recognition feature: that needs libtorch, which is fragile to wire up
-# reliably in CI (large downloads, DLL/rpath issues) compared to the rest of
-# the build. A build without ASR still runs everything except the
+# recognition feature: that needs libtorch, which dynamically links as a hard
+# runtime dependency with no baked-in path (confirmed via `ldd`/`readelf` on a
+# built binary — reliably bundling that into a package is its own project, not
+# attempted here). A build without ASR still runs everything except the
 # Pronunciation tab (which only appears once a speech recognition model is
-# installed — see app.rs::asr_model_installed); VOICEVOX playback,
-# vocabulary, review, and the SRS engine are unaffected. See README.md's
-# "Speech recognition" section, or scripts/install.sh, for a from-source
-# build that includes it.
+# installed — see app.rs::asr_model_installed, and preferences.rs's
+# `#[cfg(feature = "asr")]`-gated install row, which is compiled out
+# entirely in these builds so there's nothing there that could mislead a user
+# into installing a model that can't work); VOICEVOX playback, vocabulary,
+# review, paragraph translation, and the SRS engine are unaffected. See
+# README.md's "Speech recognition" section, or scripts/install.sh, for a
+# from-source build that includes ASR.
 #
-# Runs only when a GitHub Release is published — not on every push/PR, to
-# keep this off the critical path (and the Actions minutes bill) for normal
-# development. Add `push`/`pull_request`/`workflow_dispatch` triggers below
-# if you also want on-demand or every-commit builds.
+# Every other in-app "Preferences -> Study -> Language Installation" download
+# (dictionary, Tatoeba examples, VOICEVOX Engine, book catalog, paragraph
+# translation) is a plain HTTP download with no subprocess/script involved —
+# see langspark-core/src/installer.rs.
+#
+# Runs when a GitHub Release is published (the real release build, uploaded
+# to that release) or manually via workflow_dispatch (for iterating on CI
+# changes without publishing a release — builds and packages but skips the
+# upload step, see each job's "Attach to release" `if:` condition).
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write # needed to attach build artifacts to the release below
@@ -70,14 +81,61 @@ jobs:
             | sort -u \
             | xargs -I{} cp -u {} dist/
 
-      - name: Zip
-        run: cd dist && 7z a -r ../LangSpark-windows-x64.zip .
+      # langspark-gui/wix/main.wxs references a `DistFiles` ComponentGroup
+      # for every DLL in `dist/` (see that file's header comment for why
+      # this isn't hand-maintained: MSYS2's GTK4/libadwaita package set —
+      # and so the DLL list `ntldd` reports above — changes over time).
+      # cargo-wix auto-includes every `.wxs` file it finds under the
+      # package's `wix/` directory, so writing this there is enough to pull
+      # it into the build with no extra `--include` flag. Source paths are
+      # absolute (via $GITHUB_WORKSPACE, which GitHub Actions always sets)
+      # rather than relative to `dist/`, matching main.wxs's own paths — see
+      # its header comment for why.
+      - name: Generate WiX DLL component list
+        run: |
+          {
+            echo "<?xml version='1.0' encoding='windows-1252'?>"
+            echo "<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>"
+            echo "  <Fragment>"
+            echo "    <DirectoryRef Id='APPLICATIONFOLDER'>"
+            for f in dist/*.dll; do
+              name=$(basename "$f")
+              id=$(echo "$name" | sed -E 's/[^A-Za-z0-9_.]/_/g')
+              case "$id" in [0-9]*) id="_$id" ;; esac
+              echo "      <Component Id='Dll_${id}' Guid='*'>"
+              echo "        <File Id='DllFile_${id}' Name='${name}' DiskId='1' Source='\$(env.GITHUB_WORKSPACE)\\dist\\${name}' KeyPath='yes'/>"
+              echo "      </Component>"
+            done
+            echo "    </DirectoryRef>"
+            echo "    <ComponentGroup Id='DistFiles'>"
+            for f in dist/*.dll; do
+              name=$(basename "$f")
+              id=$(echo "$name" | sed -E 's/[^A-Za-z0-9_.]/_/g')
+              case "$id" in [0-9]*) id="_$id" ;; esac
+              echo "      <ComponentRef Id='Dll_${id}'/>"
+            done
+            echo "    </ComponentGroup>"
+            echo "  </Fragment>"
+            echo "</Wix>"
+          } > langspark-gui/wix/harvested.wxs
+
+      - name: Install cargo-wix
+        run: cargo install cargo-wix --locked
+
+      # `--no-build`: reuse the binary already built above (and the `dist/`
+      # layout assembled from it) instead of cargo-wix triggering its own
+      # `cargo build --release` — wix/main.wxs's <File Source> paths point at
+      # `dist\...` directly rather than cargo-wix's usual
+      # `$(var.CargoTargetBinDir)` (see that file's header comment).
+      - name: Build .msi
+        run: cargo wix --no-build --nocapture -p langspark-gui -o LangSpark-windows-x64.msi
 
       - name: Attach to release
+        if: github.event_name == 'release'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" LangSpark-windows-x64.zip --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" LangSpark-windows-x64.msi --clobber
 
   linux-deb:
     runs-on: ubuntu-latest
@@ -100,6 +158,7 @@ jobs:
         run: cargo deb -p langspark-gui -- --no-default-features
 
       - name: Attach to release
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ github.event.release.tag_name }}" target/debian/*.deb --clobber

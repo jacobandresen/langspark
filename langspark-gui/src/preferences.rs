@@ -279,23 +279,34 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
             },
         ));
 
-        // Speech recognition model (see app.rs's `asr_model_installed`,
-        // which gates whether the Pronunciation tab shows at all). Only the
-        // model itself is installed here — libtorch is a *build-time*
-        // dependency of this already-running binary, so there's nothing to
-        // fetch for it at runtime.
-        let asr_dir = crate::config::AppDirs::new().map(|d| d.asr_model_dir(meta.code));
-        let already_installed = asr_dir.as_ref().is_some_and(|d| d.join("tokenizer.json").exists());
-        install_group.add(&build_install_row(
-            "Speech recognition model (Qwen3-ASR)",
-            already_installed,
-            "Not installed (~1.5GB download, needs python3 on PATH)",
-            move || {
-                let dir = asr_dir.clone().context("couldn't determine the ASR model directory")?;
-                let message = langspark_core::install_asr_model("Qwen3-ASR-0.6B", &dir, &|_, _| {})?;
-                Ok(format!("{message} — restart LangSpark for the Pronunciation tab to appear"))
-            },
-        ));
+        // Speech recognition model (see app.rs's `asr_model_installed`, which
+        // gates whether the Pronunciation tab shows at all). Only present in
+        // builds with the `asr` Cargo feature: `qwen3-asr-rs` dynamically
+        // links libtorch as a hard *runtime* dependency (confirmed via
+        // `ldd`/`readelf` on a built binary — a plain `NEEDED
+        // libtorch_cpu.so` entry with no baked-in rpath, so the dynamic
+        // linker has to find it via `LD_LIBRARY_PATH` or a system lib dir;
+        // only `scripts/install.sh`'s from-source path bakes an rpath via
+        // `RUSTFLAGS`). Official release builds are `--no-default-features`
+        // (no libtorch bundled — see `.github/workflows/release-builds.yml`),
+        // so without this `#[cfg]` a user could install a 1.5GB model here
+        // only to have every transcription attempt fail with "unavailable"
+        // once the Pronunciation tab appeared.
+        #[cfg(feature = "asr")]
+        {
+            let asr_dir = crate::config::AppDirs::new().map(|d| d.asr_model_dir(meta.code));
+            let already_installed = asr_dir.as_ref().is_some_and(|d| d.join("tokenizer.json").exists());
+            install_group.add(&build_install_row(
+                "Speech recognition model (Qwen3-ASR)",
+                already_installed,
+                "Not installed (~1.5GB download, needs python3 on PATH)",
+                move || {
+                    let dir = asr_dir.clone().context("couldn't determine the ASR model directory")?;
+                    let message = langspark_core::install_asr_model("Qwen3-ASR-0.6B", &dir, &|_, _| {})?;
+                    Ok(format!("{message} — restart LangSpark for the Pronunciation tab to appear"))
+                },
+            ));
+        }
 
         // Book catalog (see app.rs's `load_installed_book_catalog`, which
         // gates whether the Books tab shows at all). Only the catalog
@@ -323,7 +334,7 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
         install_group.add(&build_install_row(
             "Paragraph translation (Helsinki-NLP OPUS-MT ja\u{2192}en)",
             already_installed,
-            "Not installed (~300MB download, needs python3 on PATH)",
+            "Not installed (~850MB download)",
             move || {
                 let dir = translation_dir.clone().context("couldn't determine the translation model directory")?;
                 langspark_core::install_translation_model(&dir, &|_, _| {})
