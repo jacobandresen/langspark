@@ -69,17 +69,45 @@ jobs:
       # GTK apps on Windows need their DLLs alongside the .exe (no
       # system-wide GTK the way Linux distros have) — ntldd walks the full
       # dependency tree, not just direct links, and we only pull in the ones
-      # MSYS2 actually installed (ucrt64\bin), not Windows system DLLs.
+      # MSYS2 actually installed (ucrt64), not Windows system DLLs.
+      #
+      # This step previously piped straight from `ntldd` through
+      # `grep -i '/ucrt64/bin/' | awk '{print $3}' | xargs` with no
+      # intermediate file — confirmed broken by an actual CI run (failed in
+      # ~1.5s with zero output on either stream, consistent with `grep`
+      # matching nothing under `pipefail` and the whole pipeline dying
+      # silently as a result; this workflow had never actually run before
+      # the model-assets-v1 release first triggered it). Writing ntldd's raw
+      # output to a file first (and printing it) means a future format
+      # mismatch shows up as visible diagnostic output instead of a bare
+      # "exit code 1" again. Matching is a substring search for "ucrt64" in
+      # any `.dll`-ending whitespace-delimited token — deliberately not
+      # anchored to a specific path shape (`/ucrt64/bin/...` vs
+      # `C:\msys64\ucrt64\bin\...` vs some other separator/casing ntldd
+      # happens to print) since that exact shape is what broke the original
+      # version.
       - name: Collect runtime DLLs
         run: |
           mkdir -p dist
           cp target/release/langspark-gui.exe dist/
           cp -r langspark-gui/data dist/
-          ntldd -R target/release/langspark-gui.exe \
-            | grep -i '/ucrt64/bin/' \
-            | awk '{print $3}' \
-            | sort -u \
-            | xargs -I{} cp -u {} dist/
+
+          ntldd -R target/release/langspark-gui.exe > /tmp/ntldd-raw.txt 2>&1 || true
+          echo "--- raw ntldd output ---"
+          cat /tmp/ntldd-raw.txt
+          echo "--- end raw ntldd output ---"
+
+          grep -ioE '[^[:space:]]*ucrt64[^[:space:]]*\.dll' /tmp/ntldd-raw.txt \
+            | sort -u -f > /tmp/dll-paths.txt || true
+          echo "--- matched DLL paths ---"
+          cat /tmp/dll-paths.txt
+
+          while IFS= read -r f; do
+            [ -f "$f" ] && cp -u "$f" dist/
+          done < /tmp/dll-paths.txt
+
+          echo "--- dist/ contents ---"
+          ls -la dist/
 
       # langspark-gui/wix/main.wxs references a `DistFiles` ComponentGroup
       # for every DLL in `dist/` (see that file's header comment for why
