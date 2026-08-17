@@ -82,10 +82,16 @@ type WordSpan = (usize, usize, usize);
 
 /// One ruby (furigana) annotation's position within a paragraph's plain
 /// text, ready to be positioned against that paragraph's laid-out
-/// `pango::Layout` via `index_to_pos`.
+/// `pango::Layout` via `index_to_pos`. `layout` is the furigana text's own
+/// shaped layout, built once in `BookReader::new` alongside the base
+/// paragraph layout — like that layout, it must not be rebuilt per draw call
+/// (see `LaidOutParagraph`'s doc comment); the previous version created a
+/// brand new `pango::Layout` per ruby mark on every repaint, which for a
+/// whole book's worth of furigana on every hover-triggered redraw was the
+/// dominant cost in `draw_func`.
 struct RubyMark {
     base_byte_start: i32,
-    reading: String,
+    layout: pango::Layout,
 }
 
 /// A single paragraph, already shaped into a `pango::Layout` at
@@ -271,7 +277,9 @@ impl BookReader {
                     TextRun::Ruby { base, reading } => {
                         let base_byte_start = plain_text.len() as i32;
                         plain_text.push_str(base);
-                        ruby.push(RubyMark { base_byte_start, reading: reading.clone() });
+                        let furigana_layout = area.create_pango_layout(Some(reading));
+                        furigana_layout.set_font_description(Some(&furigana_font));
+                        ruby.push(RubyMark { base_byte_start, layout: furigana_layout });
                     }
                 }
             }
@@ -305,7 +313,6 @@ impl BookReader {
         area.set_halign(gtk4::Align::Center);
 
         let paragraphs = Rc::new(paragraphs);
-        let furigana_font = Rc::new(furigana_font);
         // Mouse-hover and keyboard-navigated word highlights are tracked
         // separately (rather than one shared "current word" slot) so moving
         // the mouse away from text doesn't erase where keyboard navigation
@@ -318,8 +325,6 @@ impl BookReader {
         area.set_draw_func(glib::clone!(
             #[strong]
             paragraphs,
-            #[strong]
-            furigana_font,
             #[strong]
             hover,
             #[strong]
@@ -361,11 +366,9 @@ impl BookReader {
                         let fx = TEXT_X as f64 + (rect.x() / pango::SCALE) as f64;
                         let fy = p.y as f64 + (rect.y() / pango::SCALE) as f64 - FURIGANA_GAP_PX as f64 + 2.0;
 
-                        let furigana_layout = area.create_pango_layout(Some(&mark.reading));
-                        furigana_layout.set_font_description(Some(&furigana_font));
                         cr.move_to(fx, fy);
                         cr.set_source_rgba(fg.red() as f64, fg.green() as f64, fg.blue() as f64, fg.alpha() as f64 * 0.8);
-                        pangocairo::functions::show_layout(cr, &furigana_layout);
+                        pangocairo::functions::show_layout(cr, &mark.layout);
                         cr.set_source_rgba(fg.red() as f64, fg.green() as f64, fg.blue() as f64, fg.alpha() as f64);
                     }
                 }

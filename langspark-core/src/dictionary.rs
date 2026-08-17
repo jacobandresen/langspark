@@ -340,6 +340,33 @@ pub struct DictionaryVersion {
     pub version: String,
 }
 
+/// Precomputed, lowercased/normalized text `search` matches against for one
+/// [`VocabEntry`], parallel to `DictionaryManager::entries[language]` by
+/// index. Built once at load time (see `build_search_keys`) so `search`
+/// doesn't re-normalize the whole dictionary (~213k entries for JMdict's
+/// English release) on every call — previously the cost of a search-as-you-
+/// type dialog's every keystroke, since normalization allocates a new
+/// `String` per field per entry.
+struct SearchKey {
+    word: String,
+    reading: Option<String>,
+    meanings: Vec<String>,
+}
+
+/// Build `DictionaryManager::search_keys`'s per-language vector: same
+/// normalization `search` used to perform inline, just done once instead of
+/// on every call.
+fn build_search_keys(entries: &[VocabEntry], language: &str) -> Vec<SearchKey> {
+    entries
+        .iter()
+        .map(|e| SearchKey {
+            word: normalize_for_language(&e.word, language),
+            reading: e.reading.as_deref().map(|r| normalize_for_language(r, language)),
+            meanings: e.meanings.iter().map(|m| m.to_lowercase()).collect(),
+        })
+        .collect()
+}
+
 /// Manages loaded dictionaries, keyed by language code. Loading is cached in
 /// memory per language so switching between two already-loaded languages
 /// doesn't re-parse JSON.
@@ -356,6 +383,9 @@ pub struct DictionaryManager {
     /// additional amount of one-time work rather than a separate path that
     /// needs its own cache-invalidation story.
     word_index: HashMap<String, HashMap<String, usize>>,
+    /// Precomputed `search` keys, parallel to `entries[language]` — see
+    /// [`SearchKey`].
+    search_keys: HashMap<String, Vec<SearchKey>>,
 }
 
 /// Build `DictionaryManager::word_index`'s per-language map: every entry's
@@ -398,6 +428,7 @@ impl DictionaryManager {
     pub fn load_japanese(&mut self, jmdict_json: &str, version: Option<&str>) -> Result<()> {
         let entries = load_jmdict(jmdict_json)?;
         self.word_index.insert("ja".to_string(), build_word_index(&entries));
+        self.search_keys.insert("ja".to_string(), build_search_keys(&entries, "ja"));
         self.entries.insert("ja".to_string(), entries);
         if let Some(v) = version {
             self.versions.insert("ja".to_string(), v.to_string());
@@ -467,27 +498,26 @@ impl DictionaryManager {
     }
 
     /// Search entries for a language by word, reading, or meaning, with fuzzy
-    /// (accent/case-insensitive) matching.
+    /// (accent/case-insensitive) matching. Matches against `search_keys`
+    /// (normalized once at load time in `build_search_keys`) rather than
+    /// normalizing every entry inline — this runs on every keystroke of the
+    /// dictionary search dialog, so re-normalizing all ~213k JMdict entries
+    /// per call would make typing visibly stutter.
     pub fn search(&self, language: &str, query: &str) -> Vec<&VocabEntry> {
         let normalized_query = normalize_for_language(query, language);
-        self.entries
-            .get(language)
-            .map(|entries| {
-                entries
-                    .iter()
-                    .filter(|e| {
-                        normalize_for_language(&e.word, language).contains(&normalized_query)
-                            || e.reading
-                                .as_deref()
-                                .map(|r| normalize_for_language(r, language).contains(&normalized_query))
-                                .unwrap_or(false)
-                            || e.meanings
-                                .iter()
-                                .any(|m| m.to_lowercase().contains(&normalized_query))
-                    })
-                    .collect()
+        let (Some(entries), Some(keys)) = (self.entries.get(language), self.search_keys.get(language)) else {
+            return Vec::new();
+        };
+        entries
+            .iter()
+            .zip(keys.iter())
+            .filter(|(_, k)| {
+                k.word.contains(&normalized_query)
+                    || k.reading.as_deref().map(|r| r.contains(&normalized_query)).unwrap_or(false)
+                    || k.meanings.iter().any(|m| m.contains(&normalized_query))
             })
-            .unwrap_or_default()
+            .map(|(e, _)| e)
+            .collect()
     }
 
     /// Example sentences for a word, matched by exact form (kanji or reading)
