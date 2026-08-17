@@ -718,11 +718,22 @@ fn resolve_voicevox_speaker_id(voice: &str) -> u32 {
     }
 }
 
+/// Map the user-facing "speech speed" preference (1 = slowest, 5 = normal —
+/// see `Settings::tts_speed`) onto VOICEVOX's own `speedScale` parameter
+/// (1.0 = the engine's native speed). Linear from 0.5 at 1 up to 1.0 at 5, so
+/// the existing default (5) reproduces the speed LangSpark always spoke at
+/// before this setting existed.
+fn tts_speed_to_speed_scale(speed: u8) -> f64 {
+    0.5 + (speed.clamp(1, 5) as f64 - 1.0) * 0.125
+}
+
 /// Build a `synthesize(text) -> WAV bytes` closure for `active_language`
 /// (currently always Japanese, spoken through VOICEVOX), shared between the
 /// pronunciation tab's Play button and the vocabulary detail dialog's Play
 /// button (`vocab_play_callback`). Synthesized audio is cached to disk so
-/// repeat playback of the same word doesn't re-synthesize it.
+/// repeat playback of the same word doesn't re-synthesize it — the cache key
+/// folds in the speed setting so changing it doesn't serve stale audio at
+/// the old speed.
 fn build_synthesize(
     active_language: Language,
     settings: &Settings,
@@ -730,7 +741,8 @@ fn build_synthesize(
     let code = active_language.code();
     let cache_dir = crate::config::AppDirs::new().map(|d| d.audio_cache_dir());
     let speaker_id = resolve_voicevox_speaker_id(&settings.tts_voice_ja);
-    let voice_label = settings.tts_voice_ja.clone();
+    let speed_scale = tts_speed_to_speed_scale(settings.tts_speed);
+    let voice_label = format!("{}_speed{}", settings.tts_voice_ja, settings.tts_speed);
 
     Some(Box::new(move |text: &str| {
         if let Some(dir) = &cache_dir {
@@ -738,7 +750,7 @@ fn build_synthesize(
                 return Ok(cached);
             }
         }
-        let wav = langspark_core::VoicevoxTts::default_local(speaker_id).synthesize(text)?;
+        let wav = langspark_core::VoicevoxTts::default_local(speaker_id, speed_scale).synthesize(text)?;
         if let Some(dir) = &cache_dir {
             if let Err(e) = langspark_core::AudioCache::new(dir.clone()).put(code, &voice_label, text, &wav) {
                 log::warn!("failed to cache synthesized audio: {e}");

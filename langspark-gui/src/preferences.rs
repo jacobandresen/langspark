@@ -98,6 +98,33 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
         }
     ));
     voice_group.add(&ja_voice_row);
+
+    let speed_row = adw::ActionRow::builder()
+        .title("Speech speed")
+        .subtitle("How fast chapters and words are spoken aloud \u{2014} 1 is slowest, 5 is normal speed")
+        .build();
+    let speed_scale = gtk4::Scale::with_range(gtk4::Orientation::Horizontal, 1.0, 5.0, 1.0);
+    speed_scale.set_valign(gtk4::Align::Center);
+    speed_scale.set_size_request(160, -1);
+    speed_scale.set_draw_value(true);
+    speed_scale.set_digits(0);
+    for mark in 1..=5 {
+        speed_scale.add_mark(mark as f64, gtk4::PositionType::Bottom, None);
+    }
+    speed_scale.set_value(settings.borrow().tts_speed as f64);
+    speed_scale.connect_value_changed(glib::clone!(
+        #[strong]
+        settings,
+        #[strong]
+        on_save,
+        move |scale| {
+            settings.borrow_mut().tts_speed = scale.value().round() as u8;
+            on_save(&settings.borrow());
+        }
+    ));
+    speed_row.add_suffix(&speed_scale);
+    voice_group.add(&speed_row);
+
     audio_page.add(&voice_group);
 
     let device_group = adw::PreferencesGroup::builder().title("Audio Devices").build();

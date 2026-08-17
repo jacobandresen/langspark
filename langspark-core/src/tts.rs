@@ -43,29 +43,33 @@ pub struct VoicevoxTts {
     base_url: String,
     /// VOICEVOX speaker/style ID (e.g. Zundamon's normal style)
     speaker_id: u32,
+    /// VOICEVOX `speedScale` applied to the audio query before synthesis:
+    /// 1.0 is the engine's native speaking speed, lower values slow it down.
+    speed_scale: f64,
 }
 
 impl VoicevoxTts {
-    pub fn new(base_url: impl Into<String>, speaker_id: u32) -> Self {
-        Self { base_url: base_url.into(), speaker_id }
+    pub fn new(base_url: impl Into<String>, speaker_id: u32, speed_scale: f64) -> Self {
+        Self { base_url: base_url.into(), speaker_id, speed_scale }
     }
 
     /// Default local engine address on VOICEVOX's default port.
-    pub fn default_local(speaker_id: u32) -> Self {
-        Self::new("http://127.0.0.1:50021", speaker_id)
+    pub fn default_local(speaker_id: u32, speed_scale: f64) -> Self {
+        Self::new("http://127.0.0.1:50021", speaker_id, speed_scale)
     }
 }
 
 impl TtsBackend for VoicevoxTts {
     fn synthesize(&self, text: &str) -> Result<Vec<u8>> {
         // Step 1: build an audio query from the text.
-        let query: serde_json::Value = ureq::post(&format!("{}/audio_query", self.base_url))
+        let mut query: serde_json::Value = ureq::post(&format!("{}/audio_query", self.base_url))
             .query("text", text)
             .query("speaker", &self.speaker_id.to_string())
             .call()
             .context("VOICEVOX Engine audio_query request failed (is it running?)")?
             .into_json()
             .context("failed to parse VOICEVOX audio_query response")?;
+        query["speedScale"] = serde_json::json!(self.speed_scale);
 
         // Step 2: synthesize audio from the query.
         let response = ureq::post(&format!("{}/synthesis", self.base_url))

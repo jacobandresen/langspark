@@ -17,6 +17,10 @@ pub struct Settings {
     pub books_data_dir: Option<PathBuf>,
     /// VOICEVOX speaker/style ID string for Japanese TTS
     pub tts_voice_ja: String,
+    /// Pronunciation (TTS) speaking speed, 1 (slowest) to 5 (normal engine
+    /// speed, the default) — see `app.rs`'s `tts_speed_to_speed_scale` for
+    /// how this maps onto VOICEVOX's own `speedScale` parameter.
+    pub tts_speed: u8,
     /// "sm2" or "fsrs"
     pub srs_algorithm: String,
     /// Initial ease factor assigned to newly-created SRS cards (SM-2 range
@@ -35,6 +39,7 @@ impl Default for Settings {
             dictionary_data_dir: None,
             books_data_dir: None,
             tts_voice_ja: "zundamon".to_string(),
+            tts_speed: 5,
             srs_algorithm: "sm2".to_string(),
             starting_ease_factor: 2.5,
             audio_input_device: None,
@@ -81,6 +86,11 @@ impl Settings {
         }
         if let Ok(v) = std::env::var("LANGSPARK_TTS_VOICE_JA") {
             self.tts_voice_ja = v;
+        }
+        if let Ok(v) = std::env::var("LANGSPARK_TTS_SPEED") {
+            if let Ok(speed) = v.parse::<u8>() {
+                self.tts_speed = speed.clamp(1, 5);
+            }
         }
         if let Ok(v) = std::env::var("LANGSPARK_SRS_ALGORITHM") {
             self.srs_algorithm = v;
