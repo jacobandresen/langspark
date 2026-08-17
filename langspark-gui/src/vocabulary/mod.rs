@@ -243,7 +243,7 @@ pub fn build_tab(entries: &[VocabularyEntry], callbacks: VocabTabCallbacks) -> V
             let by_level = group_by_level(&filtered);
             let card_callbacks = card_callbacks.borrow();
             let card_callbacks = card_callbacks.as_ref().expect("card_callbacks set before first render");
-            for (level, level_entries) in &by_level {
+            for (level, level_entries) in ordered_sections(&by_level) {
                 sections_box.append(&build_section(level, level_entries, card_callbacks));
             }
         }
@@ -326,16 +326,51 @@ fn filter_entries<'a>(entries: &'a [VocabularyEntry], query: &str) -> Vec<&'a Vo
         .collect()
 }
 
-/// Group entries by proficiency level (falling back to "Uncategorized"),
-/// pulled out of `build_tab` so the grouping logic is testable without a
-/// GTK display connection.
+/// JLPT levels folded into the "School" shelf by `group_by_level` — exactly
+/// the levels `seed::seed_ja_school_vocabulary` pre-populates (the standard
+/// N5-N3 school curriculum), so a new user's starter vocabulary shows up as
+/// one shelf instead of being fragmented into three separate, same-origin
+/// sections.
+const SCHOOL_LEVELS: [&str; 3] = ["N3", "N4", "N5"];
+
+/// Section display order: "School" (beginner) first, then the more advanced
+/// JLPT levels it doesn't cover — anything else (other languages' level
+/// tags, "Uncategorized") is appended after, in `group_by_level`'s own
+/// (alphabetical) key order. Without this, plain alphabetical ordering would
+/// put "School" after "N1"/"N2", backwards from a learner's actual progression.
+const LEVEL_SECTION_ORDER: [&str; 3] = ["School", "N2", "N1"];
+
+/// Group entries by proficiency level — N3/N4/N5 folded together into
+/// "School" (see `SCHOOL_LEVELS`), anything else kept as its own level,
+/// falling back to "Uncategorized" — pulled out of `build_tab` so the
+/// grouping logic is testable without a GTK display connection.
 fn group_by_level<'a>(entries: &[&'a VocabularyEntry]) -> BTreeMap<String, Vec<&'a VocabularyEntry>> {
     let mut by_level: BTreeMap<String, Vec<&VocabularyEntry>> = BTreeMap::new();
     for &entry in entries {
-        let level = entry.level.clone().unwrap_or_else(|| "Uncategorized".to_string());
+        let level = match entry.level.as_deref() {
+            Some(lvl) if SCHOOL_LEVELS.contains(&lvl) => "School".to_string(),
+            Some(lvl) => lvl.to_string(),
+            None => "Uncategorized".to_string(),
+        };
         by_level.entry(level).or_default().push(entry);
     }
     by_level
+}
+
+/// Order `by_level`'s sections for display, per `LEVEL_SECTION_ORDER`.
+fn ordered_sections<'a>(by_level: &'a BTreeMap<String, Vec<&'a VocabularyEntry>>) -> Vec<(&'a str, &'a [&'a VocabularyEntry])> {
+    let mut ordered = Vec::with_capacity(by_level.len());
+    for &key in &LEVEL_SECTION_ORDER {
+        if let Some(v) = by_level.get(key) {
+            ordered.push((key, v.as_slice()));
+        }
+    }
+    for (k, v) in by_level {
+        if !LEVEL_SECTION_ORDER.contains(&k.as_str()) {
+            ordered.push((k.as_str(), v.as_slice()));
+        }
+    }
+    ordered
 }
 
 #[cfg(test)]
@@ -368,12 +403,25 @@ mod tests {
     }
 
     #[test]
-    fn test_group_by_level() {
-        let entries = vec![sample_entry("受け取る", "N4"), sample_entry("食べる", "N5")];
+    fn test_group_by_level_folds_n3_n4_n5_into_school() {
+        let entries =
+            vec![sample_entry("受け取る", "N4"), sample_entry("食べる", "N5"), sample_entry("経済", "N3")];
+        let refs: Vec<&VocabularyEntry> = entries.iter().collect();
+        let grouped = group_by_level(&refs);
+        // One shelf, not three — N3/N4/N5 are the same "school vocabulary"
+        // seed::seed_ja_school_vocabulary populates.
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped["School"].len(), 3);
+    }
+
+    #[test]
+    fn test_group_by_level_keeps_n1_n2_separate() {
+        let entries = vec![sample_entry("経済", "N2"), sample_entry("憂鬱", "N1")];
         let refs: Vec<&VocabularyEntry> = entries.iter().collect();
         let grouped = group_by_level(&refs);
         assert_eq!(grouped.len(), 2);
-        assert_eq!(grouped["N4"][0].word, "受け取る");
+        assert_eq!(grouped["N2"][0].word, "経済");
+        assert_eq!(grouped["N1"][0].word, "憂鬱");
     }
 
     #[test]
@@ -384,5 +432,28 @@ mod tests {
         let refs: Vec<&VocabularyEntry> = entries.iter().collect();
         let grouped = group_by_level(&refs);
         assert!(grouped.contains_key("Uncategorized"));
+    }
+
+    #[test]
+    fn test_ordered_sections_puts_school_before_n2_and_n1() {
+        let entries =
+            vec![sample_entry("憂鬱", "N1"), sample_entry("経済", "N2"), sample_entry("食べる", "N5")];
+        let refs: Vec<&VocabularyEntry> = entries.iter().collect();
+        let by_level = group_by_level(&refs);
+        let ordered = ordered_sections(&by_level);
+        let labels: Vec<&str> = ordered.iter().map(|(level, _)| *level).collect();
+        assert_eq!(labels, vec!["School", "N2", "N1"]);
+    }
+
+    #[test]
+    fn test_ordered_sections_appends_uncategorized_after_known_levels() {
+        let mut uncategorized = sample_entry("hola", "B1");
+        uncategorized.level = None;
+        let entries = vec![sample_entry("食べる", "N5"), uncategorized];
+        let refs: Vec<&VocabularyEntry> = entries.iter().collect();
+        let by_level = group_by_level(&refs);
+        let ordered = ordered_sections(&by_level);
+        let labels: Vec<&str> = ordered.iter().map(|(level, _)| *level).collect();
+        assert_eq!(labels, vec!["School", "Uncategorized"]);
     }
 }
