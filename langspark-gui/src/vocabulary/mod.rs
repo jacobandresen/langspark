@@ -86,17 +86,15 @@ fn build_card(entry: &VocabularyEntry, callbacks: &CardCallbacks) -> gtk4::Butto
 
 /// A labeled section (e.g. "N4") showing a horizontal strip of its entries
 /// with a +/- toggle that expands to reveal the rest in a wrapping grid.
-fn build_section(level: &str, entries: &[&VocabularyEntry], callbacks: &CardCallbacks) -> gtk4::Box {
+/// `header_css` picks the header's visual weight — `"langspark-section-header"`
+/// for a top-level shelf, `"langspark-subsection-header"` for one of
+/// "School"'s nested N5/N4/N3 sub-shelves (see `build_shelf`).
+fn build_section(level: &str, entries: &[&VocabularyEntry], callbacks: &CardCallbacks, header_css: &str) -> gtk4::Box {
     let section = Box::new(Orientation::Vertical, 6);
 
     let header = Box::new(Orientation::Horizontal, 8);
     header.set_valign(gtk4::Align::Center);
-    let title = Label::builder()
-        .label(level)
-        .css_classes(["langspark-section-header"])
-        .xalign(0.0)
-        .hexpand(true)
-        .build();
+    let title = Label::builder().label(level).css_classes([header_css]).xalign(0.0).hexpand(true).build();
     header.append(&title);
 
     let show_all = gtk4::ToggleButton::builder()
@@ -243,8 +241,8 @@ pub fn build_tab(entries: &[VocabularyEntry], callbacks: VocabTabCallbacks) -> V
             let by_level = group_by_level(&filtered);
             let card_callbacks = card_callbacks.borrow();
             let card_callbacks = card_callbacks.as_ref().expect("card_callbacks set before first render");
-            for (level, level_entries) in ordered_sections(&by_level) {
-                sections_box.append(&build_section(level, level_entries, card_callbacks));
+            for shelf in build_shelves(by_level) {
+                sections_box.append(&build_shelf(&shelf, card_callbacks));
             }
         }
     );
@@ -326,51 +324,83 @@ fn filter_entries<'a>(entries: &'a [VocabularyEntry], query: &str) -> Vec<&'a Vo
         .collect()
 }
 
-/// JLPT levels folded into the "School" shelf by `group_by_level` — exactly
-/// the levels `seed::seed_ja_school_vocabulary` pre-populates (the standard
-/// N5-N3 school curriculum), so a new user's starter vocabulary shows up as
-/// one shelf instead of being fragmented into three separate, same-origin
-/// sections.
-const SCHOOL_LEVELS: [&str; 3] = ["N3", "N4", "N5"];
+/// JLPT levels nested inside the "School" shelf (see `build_shelves`) —
+/// exactly the levels `seed::seed_ja_school_vocabulary` pre-populates (the
+/// standard N5-N3 school curriculum). Listed beginner-first, the order
+/// they're displayed as "School"'s own sub-shelves.
+const SCHOOL_LEVELS: [&str; 3] = ["N5", "N4", "N3"];
 
-/// Section display order: "School" (beginner) first, then the more advanced
-/// JLPT levels it doesn't cover — anything else (other languages' level
-/// tags, "Uncategorized") is appended after, in `group_by_level`'s own
-/// (alphabetical) key order. Without this, plain alphabetical ordering would
-/// put "School" after "N1"/"N2", backwards from a learner's actual progression.
-const LEVEL_SECTION_ORDER: [&str; 3] = ["School", "N2", "N1"];
+/// One vocabulary shelf as rendered in the tab: either a flat, single-level
+/// group (every level except the JLPT school levels) or "School" itself,
+/// nested one level deeper into its own N5/N4/N3 sub-shelves — see
+/// `build_shelf`'s handling of each. Two levels deep (not a general tree)
+/// because that's what "School" containing N3/N4/N5 actually needs; nothing
+/// else in the data nests further.
+enum Shelf<'a> {
+    Flat(String, Vec<&'a VocabularyEntry>),
+    Nested(String, Vec<(String, Vec<&'a VocabularyEntry>)>),
+}
 
-/// Group entries by proficiency level — N3/N4/N5 folded together into
-/// "School" (see `SCHOOL_LEVELS`), anything else kept as its own level,
-/// falling back to "Uncategorized" — pulled out of `build_tab` so the
-/// grouping logic is testable without a GTK display connection.
+/// Group entries by proficiency level, falling back to "Uncategorized" —
+/// pulled out of `build_shelves` so the raw bucketing is testable without a
+/// GTK display connection.
 fn group_by_level<'a>(entries: &[&'a VocabularyEntry]) -> BTreeMap<String, Vec<&'a VocabularyEntry>> {
     let mut by_level: BTreeMap<String, Vec<&VocabularyEntry>> = BTreeMap::new();
     for &entry in entries {
-        let level = match entry.level.as_deref() {
-            Some(lvl) if SCHOOL_LEVELS.contains(&lvl) => "School".to_string(),
-            Some(lvl) => lvl.to_string(),
-            None => "Uncategorized".to_string(),
-        };
+        let level = entry.level.clone().unwrap_or_else(|| "Uncategorized".to_string());
         by_level.entry(level).or_default().push(entry);
     }
     by_level
 }
 
-/// Order `by_level`'s sections for display, per `LEVEL_SECTION_ORDER`.
-fn ordered_sections<'a>(by_level: &'a BTreeMap<String, Vec<&'a VocabularyEntry>>) -> Vec<(&'a str, &'a [&'a VocabularyEntry])> {
-    let mut ordered = Vec::with_capacity(by_level.len());
-    for &key in &LEVEL_SECTION_ORDER {
-        if let Some(v) = by_level.get(key) {
-            ordered.push((key, v.as_slice()));
+/// Turn `group_by_level`'s flat, alphabetically-keyed buckets into the
+/// ordered list of shelves `build_tab` renders: `SCHOOL_LEVELS` collapsed
+/// into one nested "School" shelf, then N2/N1, then anything else (other
+/// languages' level tags, "Uncategorized") in `group_by_level`'s own
+/// alphabetical order. Plain alphabetical order alone would put "School"
+/// after "N1"/"N2" and leave N3/N4/N5 as three separate top-level sections,
+/// backwards from a learner's actual progression.
+fn build_shelves(by_level: BTreeMap<String, Vec<&VocabularyEntry>>) -> Vec<Shelf<'_>> {
+    let mut by_level = by_level;
+    let mut shelves = Vec::new();
+
+    let school: Vec<(String, Vec<&VocabularyEntry>)> =
+        SCHOOL_LEVELS.iter().filter_map(|&lvl| by_level.remove(lvl).map(|v| (lvl.to_string(), v))).collect();
+    if !school.is_empty() {
+        shelves.push(Shelf::Nested("School".to_string(), school));
+    }
+
+    for &lvl in &["N2", "N1"] {
+        if let Some(v) = by_level.remove(lvl) {
+            shelves.push(Shelf::Flat(lvl.to_string(), v));
         }
     }
-    for (k, v) in by_level {
-        if !LEVEL_SECTION_ORDER.contains(&k.as_str()) {
-            ordered.push((k.as_str(), v.as_slice()));
+
+    for (level, entries) in by_level {
+        shelves.push(Shelf::Flat(level, entries));
+    }
+
+    shelves
+}
+
+/// Render one `Shelf`: a flat shelf is just `build_section`; "School" gets
+/// its own outer header plus an indented `build_section` per JLPT sub-level.
+fn build_shelf(shelf: &Shelf, callbacks: &CardCallbacks) -> gtk4::Box {
+    match shelf {
+        Shelf::Flat(title, entries) => build_section(title, entries, callbacks, "langspark-section-header"),
+        Shelf::Nested(title, subgroups) => {
+            let outer = Box::new(Orientation::Vertical, 8);
+            outer.append(&Label::builder().label(title).css_classes(["langspark-section-header"]).xalign(0.0).build());
+
+            let sub_container = Box::new(Orientation::Vertical, 10);
+            sub_container.set_margin_start(20);
+            for (sub_title, sub_entries) in subgroups {
+                sub_container.append(&build_section(sub_title, sub_entries, callbacks, "langspark-subsection-header"));
+            }
+            outer.append(&sub_container);
+            outer
         }
     }
-    ordered
 }
 
 #[cfg(test)]
@@ -403,25 +433,15 @@ mod tests {
     }
 
     #[test]
-    fn test_group_by_level_folds_n3_n4_n5_into_school() {
+    fn test_group_by_level_keeps_levels_distinct() {
         let entries =
             vec![sample_entry("受け取る", "N4"), sample_entry("食べる", "N5"), sample_entry("経済", "N3")];
         let refs: Vec<&VocabularyEntry> = entries.iter().collect();
         let grouped = group_by_level(&refs);
-        // One shelf, not three — N3/N4/N5 are the same "school vocabulary"
-        // seed::seed_ja_school_vocabulary populates.
-        assert_eq!(grouped.len(), 1);
-        assert_eq!(grouped["School"].len(), 3);
-    }
-
-    #[test]
-    fn test_group_by_level_keeps_n1_n2_separate() {
-        let entries = vec![sample_entry("経済", "N2"), sample_entry("憂鬱", "N1")];
-        let refs: Vec<&VocabularyEntry> = entries.iter().collect();
-        let grouped = group_by_level(&refs);
-        assert_eq!(grouped.len(), 2);
-        assert_eq!(grouped["N2"][0].word, "経済");
-        assert_eq!(grouped["N1"][0].word, "憂鬱");
+        // Raw bucketing keeps N3/N4/N5 apart — `build_shelves` is what nests
+        // them into "School", not this.
+        assert_eq!(grouped.len(), 3);
+        assert_eq!(grouped["N4"][0].word, "受け取る");
     }
 
     #[test]
@@ -434,26 +454,60 @@ mod tests {
         assert!(grouped.contains_key("Uncategorized"));
     }
 
-    #[test]
-    fn test_ordered_sections_puts_school_before_n2_and_n1() {
-        let entries =
-            vec![sample_entry("憂鬱", "N1"), sample_entry("経済", "N2"), sample_entry("食べる", "N5")];
-        let refs: Vec<&VocabularyEntry> = entries.iter().collect();
-        let by_level = group_by_level(&refs);
-        let ordered = ordered_sections(&by_level);
-        let labels: Vec<&str> = ordered.iter().map(|(level, _)| *level).collect();
-        assert_eq!(labels, vec!["School", "N2", "N1"]);
+    fn shelf_titles<'a>(shelves: &'a [Shelf]) -> Vec<&'a str> {
+        shelves
+            .iter()
+            .map(|s| match s {
+                Shelf::Flat(title, _) => title.as_str(),
+                Shelf::Nested(title, _) => title.as_str(),
+            })
+            .collect()
     }
 
     #[test]
-    fn test_ordered_sections_appends_uncategorized_after_known_levels() {
+    fn test_build_shelves_nests_n3_n4_n5_inside_school() {
+        let entries =
+            vec![sample_entry("受け取る", "N4"), sample_entry("食べる", "N5"), sample_entry("経済", "N3")];
+        let refs: Vec<&VocabularyEntry> = entries.iter().collect();
+        let shelves = build_shelves(group_by_level(&refs));
+
+        assert_eq!(shelves.len(), 1); // one top-level shelf...
+        match &shelves[0] {
+            Shelf::Nested(title, subgroups) => {
+                assert_eq!(title, "School");
+                // ...containing three sub-shelves, beginner (N5) first.
+                let sub_titles: Vec<&str> = subgroups.iter().map(|(t, _)| t.as_str()).collect();
+                assert_eq!(sub_titles, vec!["N5", "N4", "N3"]);
+                assert_eq!(subgroups[0].1[0].word, "食べる");
+            }
+            Shelf::Flat(..) => panic!("expected School to be a Nested shelf"),
+        }
+    }
+
+    #[test]
+    fn test_build_shelves_orders_school_before_n2_and_n1() {
+        let entries =
+            vec![sample_entry("憂鬱", "N1"), sample_entry("経済", "N2"), sample_entry("食べる", "N5")];
+        let refs: Vec<&VocabularyEntry> = entries.iter().collect();
+        let shelves = build_shelves(group_by_level(&refs));
+        assert_eq!(shelf_titles(&shelves), vec!["School", "N2", "N1"]);
+    }
+
+    #[test]
+    fn test_build_shelves_appends_uncategorized_after_known_levels() {
         let mut uncategorized = sample_entry("hola", "B1");
         uncategorized.level = None;
         let entries = vec![sample_entry("食べる", "N5"), uncategorized];
         let refs: Vec<&VocabularyEntry> = entries.iter().collect();
-        let by_level = group_by_level(&refs);
-        let ordered = ordered_sections(&by_level);
-        let labels: Vec<&str> = ordered.iter().map(|(level, _)| *level).collect();
-        assert_eq!(labels, vec!["School", "Uncategorized"]);
+        let shelves = build_shelves(group_by_level(&refs));
+        assert_eq!(shelf_titles(&shelves), vec!["School", "Uncategorized"]);
+    }
+
+    #[test]
+    fn test_build_shelves_omits_school_when_no_school_levels_present() {
+        let entries = vec![sample_entry("経済", "N2")];
+        let refs: Vec<&VocabularyEntry> = entries.iter().collect();
+        let shelves = build_shelves(group_by_level(&refs));
+        assert_eq!(shelf_titles(&shelves), vec!["N2"]);
     }
 }

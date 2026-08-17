@@ -35,6 +35,18 @@
     margin-bottom: 4px;
 }
 
+/* A sub-shelf header nested inside a top-level one (e.g. "N4" within
+ * "School" — see vocabulary::build_shelf) — same idea as
+ * .langspark-section-header, one visual step down so the nesting reads
+ * clearly without a second indent level of its own. */
+.langspark-subsection-header {
+    font-weight: 600;
+    font-size: 1em;
+    margin-top: 2px;
+    margin-bottom: 2px;
+    opacity: 0.85;
+}
+
 .langspark-expand-toggle {
     min-width: 26px;
     min-height: 26px;
