@@ -36,12 +36,29 @@ fn build_card(entry: &VocabularyEntry, callbacks: &CardCallbacks) -> gtk4::Butto
     let content = Box::new(Orientation::Vertical, 3);
     content.set_size_request(148, -1);
 
-    let word = Label::builder().label(&entry.word).css_classes(["title-4"]).xalign(0.0).build();
+    // `max_width_chars` + `ellipsize` (rather than `wrap`) keeps every card
+    // in a row the same width regardless of word length — a long katakana
+    // loanword (e.g. "コミュニケーションギャップ") would otherwise size the
+    // label to its full unwrapped width, stretching that one card past its
+    // neighbors and breaking the strip/grid's uniform layout. The full text
+    // is still reachable via the card's tooltip below.
+    let word = Label::builder()
+        .label(&entry.word)
+        .css_classes(["title-4"])
+        .xalign(0.0)
+        .ellipsize(gtk4::pango::EllipsizeMode::End)
+        .max_width_chars(9)
+        .build();
     content.append(&word);
 
     if let Some(reading) = &entry.reading {
-        let reading_label =
-            Label::builder().label(reading).css_classes(["caption", "dim-label"]).xalign(0.0).build();
+        let reading_label = Label::builder()
+            .label(reading)
+            .css_classes(["caption", "dim-label"])
+            .xalign(0.0)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .max_width_chars(14)
+            .build();
         content.append(&reading_label);
     }
 
@@ -57,7 +74,13 @@ fn build_card(entry: &VocabularyEntry, callbacks: &CardCallbacks) -> gtk4::Butto
     content.append(&meaning);
 
     let card = gtk4::Button::builder().child(&content).css_classes(["card", "langspark-card"]).build();
-    card.set_tooltip_text(Some(&entry.meaning));
+    // Full word (unellipsized) plus its meaning, so nothing truncated above
+    // is lost — not just the meaning, which was all the tooltip carried before.
+    let tooltip = match &entry.reading {
+        Some(reading) if reading != &entry.word => format!("{}\u{3000}({reading})\n{}", entry.word, entry.meaning),
+        _ => format!("{}\n{}", entry.word, entry.meaning),
+    };
+    card.set_tooltip_text(Some(&tooltip));
 
     let dialog_entry = entry.clone();
     let callbacks = callbacks.clone();
@@ -105,18 +128,24 @@ fn build_section(level: &str, entries: &[&VocabularyEntry], callbacks: &CardCall
     header.append(&show_all);
     section.append(&header);
 
-    // Horizontal strip: first few entries in a row, always visible.
-    let strip = Box::new(Orientation::Horizontal, 10);
-    strip.set_margin_top(2);
-    for entry in entries.iter().take(6) {
-        strip.append(&build_card(entry, callbacks));
-    }
-    let strip_scroller = ScrolledWindow::builder()
-        .hscrollbar_policy(gtk4::PolicyType::Automatic)
-        .vscrollbar_policy(gtk4::PolicyType::Never)
-        .child(&strip)
+    // Compact preview: the first few entries. A `FlowBox` (not a horizontal
+    // strip in a `ScrolledWindow`, this section's previous approach) so a
+    // card that doesn't fit on the current row wraps onto a new one instead
+    // of being cut off at the window's edge — there was always *some* window
+    // width at which a horizontally-scrolling strip's last card sat exactly
+    // on that edge, half-visible. Capped to the same 6 entries the strip
+    // used to show; the "Show All" toggle below reveals the rest.
+    let preview = FlowBox::builder()
+        .selection_mode(gtk4::SelectionMode::None)
+        .max_children_per_line(6)
+        .row_spacing(10)
+        .column_spacing(10)
+        .margin_top(2)
         .build();
-    section.append(&strip_scroller);
+    for entry in entries.iter().take(6) {
+        preview.insert(&build_card(entry, callbacks), -1);
+    }
+    section.append(&preview);
 
     // Full grid, revealed by the +/- toggle.
     let grid = FlowBox::builder()
@@ -138,13 +167,13 @@ fn build_section(level: &str, entries: &[&VocabularyEntry], callbacks: &CardCall
         #[weak]
         revealer,
         #[weak]
-        strip_scroller,
+        preview,
         move |btn| {
             let expanded = btn.is_active();
             btn.set_label(if expanded { "\u{2212}" } else { "+" });
             btn.set_tooltip_text(Some(if expanded { "Collapse" } else { "Expand" }));
             revealer.set_reveal_child(expanded);
-            strip_scroller.set_visible(!expanded);
+            preview.set_visible(!expanded);
         }
     ));
 
@@ -384,20 +413,54 @@ fn build_shelves(by_level: BTreeMap<String, Vec<&VocabularyEntry>>) -> Vec<Shelf
 }
 
 /// Render one `Shelf`: a flat shelf is just `build_section`; "School" gets
-/// its own outer header plus an indented `build_section` per JLPT sub-level.
+/// its own outer header — with a disclosure toggle to open/close the whole
+/// shelf, open by default — plus an indented `build_section` per JLPT
+/// sub-level.
 fn build_shelf(shelf: &Shelf, callbacks: &CardCallbacks) -> gtk4::Box {
     match shelf {
         Shelf::Flat(title, entries) => build_section(title, entries, callbacks, "langspark-section-header"),
         Shelf::Nested(title, subgroups) => {
             let outer = Box::new(Orientation::Vertical, 8);
-            outer.append(&Label::builder().label(title).css_classes(["langspark-section-header"]).xalign(0.0).build());
+
+            let header = Box::new(Orientation::Horizontal, 8);
+            header.set_valign(gtk4::Align::Center);
+            let title_label =
+                Label::builder().label(title).css_classes(["langspark-section-header"]).xalign(0.0).hexpand(true).build();
+            header.append(&title_label);
+
+            let disclosure = gtk4::ToggleButton::builder()
+                .active(true)
+                .icon_name("pan-down-symbolic")
+                .css_classes(["flat", "circular"])
+                .tooltip_text("Collapse")
+                .build();
+            header.append(&disclosure);
+            outer.append(&header);
 
             let sub_container = Box::new(Orientation::Vertical, 10);
             sub_container.set_margin_start(20);
             for (sub_title, sub_entries) in subgroups {
                 sub_container.append(&build_section(sub_title, sub_entries, callbacks, "langspark-subsection-header"));
             }
-            outer.append(&sub_container);
+
+            let revealer = Revealer::builder()
+                .transition_type(gtk4::RevealerTransitionType::SlideDown)
+                .reveal_child(true)
+                .child(&sub_container)
+                .build();
+            outer.append(&revealer);
+
+            disclosure.connect_toggled(glib::clone!(
+                #[weak]
+                revealer,
+                move |btn| {
+                    let expanded = btn.is_active();
+                    revealer.set_reveal_child(expanded);
+                    btn.set_icon_name(if expanded { "pan-down-symbolic" } else { "pan-end-symbolic" });
+                    btn.set_tooltip_text(Some(if expanded { "Collapse" } else { "Expand" }));
+                }
+            ));
+
             outer
         }
     }

@@ -85,16 +85,28 @@ pub fn build(settings: Rc<RefCell<Settings>>, on_save: impl Fn(&Settings) + 'sta
     let audio_page = adw::PreferencesPage::builder().title("Audio").icon_name("audio-speakers-symbolic").build();
 
     let voice_group = adw::PreferencesGroup::builder().title("Text-to-Speech Voices").build();
-    let ja_voice_row = adw::EntryRow::builder().title("Japanese voice (VOICEVOX speaker)").build();
-    ja_voice_row.set_text(&settings.borrow().tts_voice_ja);
-    ja_voice_row.connect_changed(glib::clone!(
+    // Select list over `crate::app::VOICEVOX_SPEAKERS` (the small set of
+    // speakers this app has a stable, well-known VOICEVOX id for) rather
+    // than the free-text entry this replaces — picking a wrong/misspelled
+    // name there silently fell back to the default voice with no feedback.
+    let voice_model =
+        gtk4::StringList::new(&crate::app::VOICEVOX_SPEAKERS.iter().map(|&(_, display, _)| display).collect::<Vec<_>>());
+    let ja_voice_row =
+        adw::ComboRow::builder().title("Japanese voice (VOICEVOX speaker)").model(&voice_model).build();
+    let current_voice = settings.borrow().tts_voice_ja.clone();
+    let selected =
+        crate::app::VOICEVOX_SPEAKERS.iter().position(|&(key, _, _)| key == current_voice).unwrap_or(0);
+    ja_voice_row.set_selected(selected as u32);
+    ja_voice_row.connect_selected_notify(glib::clone!(
         #[strong]
         settings,
         #[strong]
         on_save,
         move |row| {
-            settings.borrow_mut().tts_voice_ja = row.text().to_string();
-            on_save(&settings.borrow());
+            if let Some(&(key, _, _)) = crate::app::VOICEVOX_SPEAKERS.get(row.selected() as usize) {
+                settings.borrow_mut().tts_voice_ja = key.to_string();
+                on_save(&settings.borrow());
+            }
         }
     ));
     voice_group.add(&ja_voice_row);

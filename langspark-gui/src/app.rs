@@ -17,6 +17,46 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
+/// A minimal splash window shown the instant the app activates, before
+/// `AppState::open` (database + dictionary loading — the slow part of
+/// startup, easily a few seconds for a full JMdict install) has even
+/// started. Without this, GTK's main loop stays blocked on that call and
+/// nothing appears on screen at all, which reads as the app having failed to
+/// launch. Callers spawn the heavy work in the background (see
+/// `task::run_blocking` in `main.rs`) and swap this out for
+/// `build_main_window`'s real window once it resolves.
+pub fn build_loading_window(app: &AdwApplication) -> AdwApplicationWindow {
+    let window = AdwApplicationWindow::builder()
+        .application(app)
+        .title("LangSpark")
+        .default_width(360)
+        .default_height(240)
+        .resizable(false)
+        .build();
+
+    let logo = gtk4::Image::from_icon_name("org.langspark.LangSpark");
+    logo.set_pixel_size(96);
+
+    let spinner = gtk4::Spinner::builder().width_request(32).height_request(32).build();
+    spinner.start();
+
+    let label = gtk4::Label::builder().label("Loading LangSpark\u{2026}").css_classes(["title-3"]).build();
+
+    let content = GtkBox::new(gtk4::Orientation::Vertical, 12);
+    content.set_valign(gtk4::Align::Center);
+    content.set_halign(gtk4::Align::Center);
+    content.set_vexpand(true);
+    content.append(&logo);
+    content.append(&spinner);
+    content.append(&label);
+
+    let toolbar_view = ToolbarView::builder().content(&content).build();
+    toolbar_view.add_top_bar(&HeaderBar::builder().show_title(false).build());
+
+    window.set_content(Some(&toolbar_view));
+    window
+}
+
 /// Main application window and its toast overlay (for `diagnostics::show_error_toast`).
 ///
 /// The Vocabulary tab is populated from `state` (loaded synchronously at
@@ -60,6 +100,15 @@ pub fn build_main_window(
     let view_stack = ViewStack::new();
     view_stack.set_vexpand(true);
 
+    // Shared with every "Play" button built below (and updated live from
+    // Preferences — see `register_app_actions`) so a voice/speed change
+    // takes effect on the next Play without restarting the app; see
+    // `VoiceSettings`.
+    let voice_settings = Arc::new(Mutex::new(VoiceSettings {
+        voice: settings.borrow().tts_voice_ja.clone(),
+        speed: settings.borrow().tts_speed,
+    }));
+
     // `review_session` is *built* before the Vocabulary tab (which it would
     // otherwise seem to follow, view-switcher-order-wise) because
     // `dictionary_add_word_callbacks` needs `review_session.append` — a
@@ -69,7 +118,7 @@ pub fn build_main_window(
     // live. Its `add_titled` call is deferred below, after Vocabulary's, so
     // this dependency doesn't also reorder the view switcher itself.
     let review_items = review::build_items_from_cards(&tab_data.due_cards, &tab_data.vocabulary, &tab_data.kanji);
-    let review_play_callback = vocab_play_callback(active_language, &settings.borrow(), &toast_overlay);
+    let review_play_callback = vocab_play_callback(active_language, voice_settings.clone(), &toast_overlay);
     let review_session = review::ReviewSession::new(
         review_items,
         glib::clone!(
@@ -106,7 +155,7 @@ pub fn build_main_window(
                 &toast_overlay,
                 &review_session.append,
             ),
-            on_play: vocab_play_callback(active_language, &settings.borrow(), &toast_overlay),
+            on_play: vocab_play_callback(active_language, voice_settings.clone(), &toast_overlay),
             delete: vocab_delete_callback(&state, &toast_overlay),
             example_lookup: example_lookup_callback(&state, active_language),
         },
@@ -125,16 +174,22 @@ pub fn build_main_window(
             .collect();
         let pronunciation_tab = pronunciation::PronunciationTab::new(
             practice_words,
-            pronunciation_callbacks(active_language, &settings.borrow()),
+            pronunciation_callbacks(active_language, &settings.borrow(), voice_settings.clone()),
         );
         let pronunciation_page =
             view_stack.add_titled(&pronunciation_tab.widget, Some("pronunciation"), "Pronunciation");
         pronunciation_page.set_icon_name(Some("audio-input-microphone-symbolic"));
     }
 
-    if let Some(callbacks) =
-        books_tab_callbacks(&state, active_language, &settings, &toast_overlay, &vocab_tab.append, &review_session.append)
-    {
+    if let Some(callbacks) = books_tab_callbacks(
+        &state,
+        active_language,
+        &settings,
+        voice_settings.clone(),
+        &toast_overlay,
+        &vocab_tab.append,
+        &review_session.append,
+    ) {
         let catalog = load_installed_book_catalog(&settings.borrow());
         if !catalog.is_empty() {
             let books_widget = books::build_tab(&catalog, callbacks);
@@ -166,14 +221,19 @@ pub fn build_main_window(
     toast_overlay.set_child(Some(&toolbar_view));
     window.set_content(Some(&toast_overlay));
 
-    register_app_actions(app, &window, settings);
+    register_app_actions(app, &window, settings, voice_settings);
 
     (window, toast_overlay)
 }
 
 /// Register app-level actions (`app.preferences`, `app.about`, `app.quit`)
 /// backing the header menu.
-fn register_app_actions(app: &AdwApplication, window: &AdwApplicationWindow, settings: Rc<RefCell<Settings>>) {
+fn register_app_actions(
+    app: &AdwApplication,
+    window: &AdwApplicationWindow,
+    settings: Rc<RefCell<Settings>>,
+    voice_settings: Arc<Mutex<VoiceSettings>>,
+) {
     let quit_action = SimpleAction::new("quit", None);
     quit_action.connect_activate(glib::clone!(
         #[weak]
@@ -233,8 +293,17 @@ fn register_app_actions(app: &AdwApplication, window: &AdwApplicationWindow, set
         window,
         #[strong]
         settings,
+        #[strong]
+        voice_settings,
         move |_, _| {
+            let voice_settings = voice_settings.clone();
             let dialog = crate::preferences::build(settings.clone(), move |updated| {
+                // Keep the background-thread-visible TTS mirror in step with
+                // every settings change — see `VoiceSettings`'s doc comment
+                // for why `Settings` itself (`Rc<RefCell<_>>`) can't be read
+                // directly from where synthesis actually runs.
+                *voice_settings.lock().expect("voice settings mutex poisoned") =
+                    VoiceSettings { voice: updated.tts_voice_ja.clone(), speed: updated.tts_speed };
                 if let Some(dirs) = crate::config::AppDirs::new() {
                     if let Err(e) = updated.save(&dirs.config_file()) {
                         log::warn!("failed to save settings: {e}");
@@ -431,6 +500,7 @@ fn books_tab_callbacks(
     state: &Arc<AppState>,
     active_language: Language,
     settings: &Rc<RefCell<Settings>>,
+    voice_settings: Arc<Mutex<VoiceSettings>>,
     toast_overlay: &ToastOverlay,
     vocab_append: &Rc<dyn Fn(langspark_core::VocabularyEntry)>,
     review_append: &Rc<dyn Fn(review::ReviewItem)>,
@@ -476,7 +546,7 @@ fn books_tab_callbacks(
 
     let reader = books::reader::ReaderCallbacks {
         lookup,
-        speak: vocab_play_callback(active_language, &settings.borrow(), toast_overlay),
+        speak: vocab_play_callback(active_language, voice_settings, toast_overlay),
         add_to_vocabulary: persist_and_refresh_vocab_tab(
             build_persist_callback(state, settings, toast_overlay, review_append),
             vocab_append.clone(),
@@ -698,24 +768,35 @@ pub fn spawn_voicevox_engine_if_installed(dirs: Option<&crate::config::AppDirs>)
     }
 }
 
-/// Resolve a VOICEVOX speaker ID from the free-text `tts_voice_ja` setting: a
-/// bare number is used directly (full control over any installed speaker),
-/// otherwise a few well-known default VOICEVOX character names resolve to
-/// their public speaker IDs (stable across VOICEVOX Engine installs),
-/// falling back to Zundamon Normal — the project's documented default voice
-/// (see `language.rs`'s `default_tts_voice`).
+/// VOICEVOX speakers this app has a stable, well-known speaker ID for out of
+/// the box — `(settings key, display name, speaker id)`. These IDs are
+/// stable across VOICEVOX Engine installs (a handful of "default" characters
+/// bundled with every install), unlike the engine's fuller speaker roster,
+/// which would need querying its own `/speakers` endpoint to enumerate — not
+/// attempted here since the engine may not even be running yet when
+/// Preferences is opened. Shared between `resolve_voicevox_speaker_id` below
+/// and the Japanese voice `ComboRow` in `preferences.rs`, so the select list
+/// and the resolver can't drift apart.
+pub(crate) const VOICEVOX_SPEAKERS: &[(&str, &str, u32)] = &[
+    ("zundamon", "Zundamon (ずんだもん)", 3),
+    ("metan", "Shikoku Metan (四国めたん)", 2),
+    ("tsumugi", "Kasukabe Tsumugi (春日部つむぎ)", 8),
+];
+
+/// Resolve a VOICEVOX speaker ID from the `tts_voice_ja` setting: one of
+/// `VOICEVOX_SPEAKERS`' keys (the only values the Preferences `ComboRow` ever
+/// writes), or a bare number for full control over any other installed
+/// speaker (not selectable from the UI, but still honored for anyone editing
+/// config.toml by hand) — falling back to Zundamon Normal, the project's
+/// documented default voice (see `language.rs`'s `default_tts_voice`).
 fn resolve_voicevox_speaker_id(voice: &str) -> u32 {
     const ZUNDAMON_NORMAL: u32 = 3;
     let voice = voice.trim();
     if let Ok(id) = voice.parse::<u32>() {
         return id;
     }
-    match voice.to_lowercase().as_str() {
-        "shikoku metan" | "metan" | "四国めたん" => 2,
-        "zundamon" | "ずんだもん" => ZUNDAMON_NORMAL,
-        "kasukabe tsumugi" | "tsumugi" | "春日部つむぎ" => 8,
-        _ => ZUNDAMON_NORMAL,
-    }
+    let voice = voice.to_lowercase();
+    VOICEVOX_SPEAKERS.iter().find(|(key, _, _)| *key == voice).map(|&(_, _, id)| id).unwrap_or(ZUNDAMON_NORMAL)
 }
 
 /// Map the user-facing "speech speed" preference (1 = slowest, 5 = normal —
@@ -727,24 +808,47 @@ fn tts_speed_to_speed_scale(speed: u8) -> f64 {
     0.5 + (speed.clamp(1, 5) as f64 - 1.0) * 0.125
 }
 
+/// Live mirror of the two `Settings` fields controlling Japanese TTS
+/// (`tts_voice_ja`, `tts_speed`) that every "Play" button's synthesis needs
+/// — kept in sync with `Settings` whenever Preferences saves (see
+/// `register_app_actions`'s `on_save`), but held behind a `Mutex` rather than
+/// `Settings`' own `Rc<RefCell<_>>`, which isn't `Send`: synthesis always
+/// runs on a background thread via `task::run_blocking` (see `task.rs`), so
+/// a closure built from a value read out of `Rc<RefCell<Settings>>` once at
+/// *startup* — the previous approach — went stale the moment the voice was
+/// changed in Preferences, only picking up the new one after restarting the
+/// app.
+#[derive(Clone)]
+struct VoiceSettings {
+    voice: String,
+    speed: u8,
+}
+
 /// Build a `synthesize(text) -> WAV bytes` closure for `active_language`
 /// (currently always Japanese, spoken through VOICEVOX), shared between the
 /// pronunciation tab's Play button and the vocabulary detail dialog's Play
 /// button (`vocab_play_callback`). Synthesized audio is cached to disk so
 /// repeat playback of the same word doesn't re-synthesize it — the cache key
 /// folds in the speed setting so changing it doesn't serve stale audio at
-/// the old speed.
+/// the old speed. Reads `voice_settings` fresh on *every* call, rather than
+/// once when this closure is built, so a voice/speed change in Preferences
+/// takes effect the very next time Play is pressed — see `VoiceSettings`.
 fn build_synthesize(
     active_language: Language,
-    settings: &Settings,
+    voice_settings: Arc<Mutex<VoiceSettings>>,
 ) -> Option<Box<dyn Fn(&str) -> anyhow::Result<Vec<u8>> + Send + Sync>> {
     let code = active_language.code();
     let cache_dir = crate::config::AppDirs::new().map(|d| d.audio_cache_dir());
-    let speaker_id = resolve_voicevox_speaker_id(&settings.tts_voice_ja);
-    let speed_scale = tts_speed_to_speed_scale(settings.tts_speed);
-    let voice_label = format!("{}_speed{}", settings.tts_voice_ja, settings.tts_speed);
 
     Some(Box::new(move |text: &str| {
+        let (speaker_id, speed_scale, voice_label) = {
+            let vs = voice_settings.lock().expect("voice settings mutex poisoned");
+            (
+                resolve_voicevox_speaker_id(&vs.voice),
+                tts_speed_to_speed_scale(vs.speed),
+                format!("{}_speed{}", vs.voice, vs.speed),
+            )
+        };
         if let Some(dir) = &cache_dir {
             if let Some(cached) = langspark_core::AudioCache::new(dir.clone()).get(code, &voice_label, text) {
                 return Ok(cached);
@@ -765,9 +869,13 @@ fn build_synthesize(
 /// user must have it running separately; there's no bundled offline engine).
 /// Recording/transcription (speech recognition) are wired the same way
 /// regardless of language — see `build_record`/`build_transcribe`.
-fn pronunciation_callbacks(active_language: Language, settings: &Settings) -> pronunciation::PronunciationCallbacks {
+fn pronunciation_callbacks(
+    active_language: Language,
+    settings: &Settings,
+    voice_settings: Arc<Mutex<VoiceSettings>>,
+) -> pronunciation::PronunciationCallbacks {
     let code = active_language.code();
-    let Some(synthesize) = build_synthesize(active_language, settings) else {
+    let Some(synthesize) = build_synthesize(active_language, voice_settings) else {
         return unavailable_pronunciation_callbacks(active_language, settings.audio_input_device.clone());
     };
 
@@ -792,10 +900,10 @@ fn pronunciation_callbacks(active_language: Language, settings: &Settings) -> pr
 /// is available for `active_language` — see `build_synthesize`.
 fn vocab_play_callback(
     active_language: Language,
-    settings: &Settings,
+    voice_settings: Arc<Mutex<VoiceSettings>>,
     toast_overlay: &ToastOverlay,
 ) -> Option<Rc<dyn Fn(String)>> {
-    let synthesize = build_synthesize(active_language, settings)?;
+    let synthesize = build_synthesize(active_language, voice_settings)?;
     let synthesize = Arc::new(synthesize);
     let play_cache_dir = crate::config::AppDirs::new().map(|d| d.audio_cache_dir());
 

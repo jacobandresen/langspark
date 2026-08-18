@@ -44,7 +44,18 @@ fn build_card(entry: &BookCatalogEntry, callbacks: &Rc<BooksTabCallbacks>, nav: 
         .build();
     content.append(&title);
 
-    let author = Label::builder().label(&entry.author).css_classes(["caption", "dim-label"]).xalign(0.0).build();
+    // `max_width_chars` (not just `ellipsize`) caps this label's own
+    // natural width request — unlike `title` above, this has no `wrap` to
+    // fall back on for a long, space-free author name to keep the card from
+    // stretching past its neighbors (see the matching fix in
+    // `vocabulary::build_card`'s word label, which this mirrors).
+    let author = Label::builder()
+        .label(&entry.author)
+        .css_classes(["caption", "dim-label"])
+        .xalign(0.0)
+        .ellipsize(gtk4::pango::EllipsizeMode::End)
+        .max_width_chars(18)
+        .build();
     content.append(&author);
 
     let card = gtk4::Button::builder().child(&content).css_classes(["card", "langspark-card"]).build();
@@ -124,17 +135,22 @@ fn build_section(genre: &str, entries: &[&BookCatalogEntry], callbacks: &Rc<Book
     header.append(&show_all);
     section.append(&header);
 
-    let strip = Box::new(Orientation::Horizontal, 10);
-    strip.set_margin_top(2);
-    for entry in entries.iter().take(6) {
-        strip.append(&build_card(entry, callbacks, nav));
-    }
-    let strip_scroller = ScrolledWindow::builder()
-        .hscrollbar_policy(gtk4::PolicyType::Automatic)
-        .vscrollbar_policy(gtk4::PolicyType::Never)
-        .child(&strip)
+    // Compact preview: the first few entries. A `FlowBox` (not a horizontal
+    // strip in a `ScrolledWindow`) so a card that doesn't fit on the current
+    // row wraps onto a new one instead of being cut off at the window's edge
+    // — see the matching fix/comment in `vocabulary::build_section`, which
+    // this mirrors.
+    let preview = FlowBox::builder()
+        .selection_mode(gtk4::SelectionMode::None)
+        .max_children_per_line(6)
+        .row_spacing(10)
+        .column_spacing(10)
+        .margin_top(2)
         .build();
-    section.append(&strip_scroller);
+    for entry in entries.iter().take(6) {
+        preview.insert(&build_card(entry, callbacks, nav), -1);
+    }
+    section.append(&preview);
 
     let grid = FlowBox::builder().selection_mode(gtk4::SelectionMode::None).max_children_per_line(6).row_spacing(10).column_spacing(10).build();
     let revealer = Revealer::builder().transition_type(gtk4::RevealerTransitionType::SlideDown).child(&grid).build();
@@ -153,7 +169,7 @@ fn build_section(genre: &str, entries: &[&BookCatalogEntry], callbacks: &Rc<Book
         #[weak]
         revealer,
         #[weak]
-        strip_scroller,
+        preview,
         #[weak]
         grid,
         #[strong]
@@ -175,7 +191,7 @@ fn build_section(genre: &str, entries: &[&BookCatalogEntry], callbacks: &Rc<Book
                 populated.set(true);
             }
             revealer.set_reveal_child(expanded);
-            strip_scroller.set_visible(!expanded);
+            preview.set_visible(!expanded);
         }
     ));
 

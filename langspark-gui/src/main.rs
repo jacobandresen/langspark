@@ -38,43 +38,65 @@ fn main() -> glib::ExitCode {
     app.connect_activate(|app| {
         ui::load_styles();
 
-        // Load settings (falling back to defaults) and resolve the active language
-        let dirs = AppDirs::new();
-        let settings = dirs
-            .as_ref()
-            .and_then(|d| Settings::load(&d.config_file()).ok())
-            .unwrap_or_default();
-        let active_language: Language = settings.active_language.parse().unwrap_or(Language::Japanese);
-        // Honor a custom dictionary_data_dir override (also respected by the
-        // Preferences installer, see preferences.rs), falling back to the
-        // default XDG dictionaries dir.
-        let dict_dir = settings.dictionary_data_dir.clone().or_else(|| dirs.as_ref().map(|d| d.dictionaries_dir()));
-        let settings = Rc::new(RefCell::new(settings));
+        // Show a splash window immediately, before any of the slow startup
+        // work below has even started — otherwise GTK's main loop stays
+        // blocked on `AppState::open` (database + dictionary loading, easily
+        // a few seconds) and nothing appears on screen, which reads as the
+        // app having failed to launch. See `app::build_loading_window`.
+        let loading_window = app::build_loading_window(app);
+        loading_window.present();
 
-        // Open the database, falling back to an in-memory one if the real
-        // path can't be created (e.g. no writable home directory) so the app
-        // still starts, just without persistence.
-        let db_path = dirs.as_ref().map(|d| d.database_file()).unwrap_or_else(|| PathBuf::from(":memory:"));
-        let state = state::AppState::open(&db_path, active_language, dict_dir.as_deref())
-            .or_else(|e| {
-                log::warn!("failed to open database at {}: {e}; falling back to in-memory", db_path.display());
-                state::AppState::open(std::path::Path::new(":memory:"), active_language, dict_dir.as_deref())
+        let app = app.clone();
+        glib::spawn_future_local(async move {
+            // Everything here is blocking I/O (config file, SQLite,
+            // dictionary JSON parsing) — run it on a background thread via
+            // `task::run_blocking` so the loading window stays responsive
+            // and its spinner keeps animating instead of freezing.
+            let (dirs, active_language, settings, state) = task::run_blocking(|| {
+                // Load settings (falling back to defaults) and resolve the active language
+                let dirs = AppDirs::new();
+                let settings = dirs
+                    .as_ref()
+                    .and_then(|d| Settings::load(&d.config_file()).ok())
+                    .unwrap_or_default();
+                let active_language: Language = settings.active_language.parse().unwrap_or(Language::Japanese);
+                // Honor a custom dictionary_data_dir override (also respected by the
+                // Preferences installer, see preferences.rs), falling back to the
+                // default XDG dictionaries dir.
+                let dict_dir =
+                    settings.dictionary_data_dir.clone().or_else(|| dirs.as_ref().map(|d| d.dictionaries_dir()));
+
+                // Open the database, falling back to an in-memory one if the
+                // real path can't be created (e.g. no writable home
+                // directory) so the app still starts, just without persistence.
+                let db_path = dirs.as_ref().map(|d| d.database_file()).unwrap_or_else(|| PathBuf::from(":memory:"));
+                let state = state::AppState::open(&db_path, active_language, dict_dir.as_deref())
+                    .or_else(|e| {
+                        log::warn!("failed to open database at {}: {e}; falling back to in-memory", db_path.display());
+                        state::AppState::open(std::path::Path::new(":memory:"), active_language, dict_dir.as_deref())
+                    })
+                    .expect("failed to open even an in-memory database");
+
+                (dirs, active_language, settings, state)
             })
-            .expect("failed to open even an in-memory database");
-        let state = Arc::new(state);
+            .await;
+            let settings = Rc::new(RefCell::new(settings));
+            let state = Arc::new(state);
 
-        // Create the main window
-        let (window, toast_overlay) = app::build_main_window(app, active_language, settings, state);
+            // Create the main window
+            let (window, toast_overlay) = app::build_main_window(&app, active_language, settings, state);
 
-        // Run startup dependency checks
-        if let Some(dirs) = &dirs {
-            for issue in diagnostics::check_dependencies(active_language, &dirs.dictionaries_dir()) {
-                diagnostics::show_error_toast(&toast_overlay, &issue.message);
+            // Run startup dependency checks
+            if let Some(dirs) = &dirs {
+                for issue in diagnostics::check_dependencies(active_language, &dirs.dictionaries_dir()) {
+                    diagnostics::show_error_toast(&toast_overlay, &issue.message);
+                }
             }
-        }
-        app::spawn_voicevox_engine_if_installed(dirs.as_ref());
+            app::spawn_voicevox_engine_if_installed(dirs.as_ref());
 
-        window.present();
+            window.present();
+            loading_window.close();
+        });
     });
 
     // Run the application

@@ -59,7 +59,6 @@ pub fn build(entry: &VocabularyEntry, examples: &[ExampleSentence], callbacks: V
     if let Some(level) = &entry.level {
         list.append(&adw::ActionRow::builder().title("Level").subtitle(level).build());
     }
-    root.append(&list);
 
     let example_title =
         if examples.len() > 1 { format!("Example sentences ({})", examples.len()) } else { "Example sentence".to_string() };
@@ -85,7 +84,24 @@ pub fn build(entry: &VocabularyEntry, examples: &[ExampleSentence], callbacks: V
     }
     let example_list = gtk4::ListBox::builder().css_classes(["boxed-list"]).margin_top(8).build();
     example_list.append(&example_row);
-    root.append(&example_list);
+
+    // `list`/`example_list` are the two pieces that can grow past the
+    // dialog's default size — a word expanded to show several example
+    // sentences otherwise pushed the word title and Play/Delete buttons
+    // right off the top/bottom of the window with no way to scroll back to
+    // them (see the bug this fixes: a multi-example word's dialog rendered
+    // taller than the window and simply got clipped at both edges). Scrolling
+    // just this middle section keeps the word/reading and action buttons
+    // pinned in view regardless of how much content is between them.
+    let scroll_content = GtkBox::new(Orientation::Vertical, 12);
+    scroll_content.append(&list);
+    scroll_content.append(&example_list);
+    let scroller = gtk4::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .vexpand(true)
+        .child(&scroll_content)
+        .build();
+    root.append(&scroller);
 
     let action_box = GtkBox::new(Orientation::Horizontal, 8);
     action_box.set_margin_top(12);

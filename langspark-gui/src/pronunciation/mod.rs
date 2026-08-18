@@ -200,7 +200,12 @@ impl PronunciationTab {
         root.set_margin_start(12);
         root.set_margin_end(12);
 
-        let word_label = Label::builder().css_classes(["title-1"]).build();
+        // `wrap` (not `ellipsize`, unlike the vocabulary cards' word label)
+        // — this word is the whole point of the screen, so a long one should
+        // wrap onto a second line rather than hide characters the user is
+        // meant to be reading aloud.
+        let word_label =
+            Label::builder().css_classes(["title-1"]).wrap(true).justify(gtk4::Justification::Center).max_width_chars(20).build();
         let nav_box = GtkBox::new(Orientation::Horizontal, 8);
         nav_box.set_halign(gtk4::Align::Center);
         nav_box.set_css_classes(&["langspark-word-card"]);

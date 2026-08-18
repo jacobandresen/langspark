@@ -286,7 +286,15 @@ impl ReviewSession {
         root.add_controller(key_controller);
         root.set_focusable(true);
 
-        Self { root: root.upcast(), append }
+        // A plain `Box` here would clip the rating buttons on a window (or
+        // screen — some tiling window managers force an undersized one
+        // outright) too short to fit progress bar + card + buttons +
+        // shortcut hint at once, with no way to reach the rest. Wrapping in
+        // a `ScrolledWindow` costs nothing when everything already fits (no
+        // scrollbar appears) and falls back gracefully when it doesn't.
+        let scroller = gtk4::ScrolledWindow::builder().child(&root).vexpand(true).build();
+
+        Self { root: scroller.upcast(), append }
     }
 }
 
