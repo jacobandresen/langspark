@@ -54,16 +54,31 @@ pub fn build(entry: &VocabEntry, callbacks: &PopupCallbacks) -> gtk4::Popover {
     // `subtitle_lines` caps (and ellipsizes) how tall this row can grow —
     // without it, a word with many JMdict senses joined by "; " makes the
     // popup balloon well past the click point it's anchored to.
-    let meaning_row =
-        adw::ActionRow::builder().title("Meaning").subtitle(entry.meanings.join("; ")).subtitle_lines(3).build();
+    //
+    // `.subtitle()` renders as Pango markup, not plain text, so the
+    // (dictionary-sourced) text goes through `markup_escape_text` first — a
+    // literal '<' or '&' would otherwise make Pango's markup parser choke on
+    // what it reads as a broken tag instead of just displaying the character
+    // (see the matching fix/comment in `vocabulary::dialog`, which this
+    // mirrors).
+    let meaning_row = adw::ActionRow::builder()
+        .title("Meaning")
+        .subtitle(glib::markup_escape_text(&entry.meanings.join("; ")))
+        .subtitle_lines(3)
+        .build();
     let list = gtk4::ListBox::builder().css_classes(["boxed-list"]).build();
     list.append(&meaning_row);
 
     if !entry.part_of_speech.is_empty() {
-        list.append(&adw::ActionRow::builder().title("Part of speech").subtitle(entry.part_of_speech.join(", ")).build());
+        list.append(
+            &adw::ActionRow::builder()
+                .title("Part of speech")
+                .subtitle(glib::markup_escape_text(&entry.part_of_speech.join(", ")))
+                .build(),
+        );
     }
     if let Some(level) = &entry.level {
-        list.append(&adw::ActionRow::builder().title("Level").subtitle(level).build());
+        list.append(&adw::ActionRow::builder().title("Level").subtitle(glib::markup_escape_text(level)).build());
     }
     root.append(&list);
 

@@ -49,15 +49,23 @@ pub fn build(entry: &VocabularyEntry, examples: &[ExampleSentence], callbacks: V
     // word with a long meaning otherwise keeps wrapping indefinitely (see
     // the matching fix in `books::popup`, which this dialog is meant to
     // look and behave the same as).
-    let meaning_row = adw::ActionRow::builder().title("Meaning").subtitle(&entry.meaning).subtitle_lines(3).build();
+    //
+    // Every `.title()`/`.subtitle()` below wraps its (dictionary- or
+    // Tatoeba-sourced, not app-authored) text in `markup_escape_text` —
+    // `AdwActionRow`'s title/subtitle render as Pango markup, not plain
+    // text, so a literal '<' or '&' in the source data would otherwise make
+    // Pango's markup parser choke on what it reads as a broken tag instead
+    // of just displaying the character.
+    let meaning_row =
+        adw::ActionRow::builder().title("Meaning").subtitle(glib::markup_escape_text(&entry.meaning)).subtitle_lines(3).build();
     let list = gtk4::ListBox::builder().css_classes(["boxed-list"]).margin_top(12).build();
     list.append(&meaning_row);
 
     if let Some(pos) = &entry.part_of_speech {
-        list.append(&adw::ActionRow::builder().title("Part of speech").subtitle(pos).build());
+        list.append(&adw::ActionRow::builder().title("Part of speech").subtitle(glib::markup_escape_text(pos)).build());
     }
     if let Some(level) = &entry.level {
-        list.append(&adw::ActionRow::builder().title("Level").subtitle(level).build());
+        list.append(&adw::ActionRow::builder().title("Level").subtitle(glib::markup_escape_text(level)).build());
     }
 
     let example_title =
@@ -67,7 +75,10 @@ pub fn build(entry: &VocabularyEntry, examples: &[ExampleSentence], callbacks: V
         example_row.add_row(&adw::ActionRow::builder().title("No example available for this word").build());
     } else {
         for example in examples {
-            let row = adw::ActionRow::builder().title(&example.japanese).subtitle(&example.english).build();
+            let row = adw::ActionRow::builder()
+                .title(glib::markup_escape_text(&example.japanese))
+                .subtitle(glib::markup_escape_text(&example.english))
+                .build();
             if let Some(speak) = &callbacks.speak {
                 let speak = speak.clone();
                 let japanese = example.japanese.clone();

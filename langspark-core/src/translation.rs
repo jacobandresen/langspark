@@ -100,6 +100,21 @@ pub struct Translator {
 /// creative text generation where sampling diversity matters).
 const GREEDY_SEED: u64 = 0;
 
+/// How strongly `translate`'s decode loop discourages repeating an
+/// already-generated token — see its `apply_repeat_penalty` call. `1.1`
+/// matches the default candle's own text-generation examples
+/// (llama/mistral/phi/...) all use.
+const REPEAT_PENALTY: f32 = 1.1;
+
+/// Tokens `translate`'s decode loop must generate before it's allowed to
+/// stop. Without this, the model sometimes samples end-of-sequence/pad as
+/// literally the *first* token for a sentence it finds difficult — confirmed
+/// on a real paragraph once `REPEAT_PENALTY` was added: the same input that
+/// used to degenerate into a repetition loop instead produced an empty
+/// translation. A short forced minimum trades a possibly-imperfect partial
+/// translation for that empty one.
+const MIN_NEW_TOKENS: usize = 3;
+
 impl Translator {
     /// Load the model from `model_dir` (expects `config.json`,
     /// `pytorch_model.bin`, `source.spm`, `target.spm` — see
@@ -172,20 +187,71 @@ impl Translator {
             let logits = model.decode(&input_ids, &encoder_xs, start_pos)?;
             let logits = logits.squeeze(0)?;
             let logits = logits.get(logits.dim(0)? - 1)?;
+            // Greedy (argmax) decoding has no built-in defense against
+            // getting stuck repeating the same phrase verbatim — confirmed
+            // on real paragraphs, where a handful out of a small sample
+            // degenerated into "I've seen<pad> I've seen<pad> ..." or, worse,
+            // nothing but `<pad>` hundreds of times over. Penalizing tokens
+            // already generated this call (not persisted across calls —
+            // `apply_repeat_penalty` only sees `token_ids`, reset per
+            // `translate`) makes repeating a token less attractive each time
+            // it recurs, which breaks the loop before it can run away. `1.1`
+            // matches candle's own text-generation examples' default.
+            let logits = candle_transformers::utils::apply_repeat_penalty(&logits, REPEAT_PENALTY, &token_ids[1..])?;
+            // Enforce `MIN_NEW_TOKENS` by making end-of-sequence/pad
+            // impossible to sample (not just discouraged, unlike the repeat
+            // penalty above) until then.
+            let logits = if token_ids.len() - 1 < MIN_NEW_TOKENS {
+                mask_tokens(
+                    &logits,
+                    &[self.config.eos_token_id, self.config.forced_eos_token_id, self.config.pad_token_id],
+                )?
+            } else {
+                logits
+            };
             let token = logits_processor.sample(&logits)?;
             token_ids.push(token);
-            if token == self.config.eos_token_id || token == self.config.forced_eos_token_id {
+            // `pad_token_id` stops generation the same as end-of-sequence
+            // would: a well-formed translation never legitimately contains
+            // its own decoder-start/pad token mid-sequence (Marian reuses
+            // one id for both — see this module's doc comment), so sampling
+            // it here is itself a sign generation has gone off the rails,
+            // confirmed by the reproduction above. Without this, the token
+            // was previously left to decode to the literal string "<pad>",
+            // which is also invalid Pango markup — see langspark-gui's
+            // `books::sentence_popup` fix for the crash that caused.
+            if token == self.config.eos_token_id
+                || token == self.config.forced_eos_token_id
+                || token == self.config.pad_token_id
+            {
                 break;
             }
         }
 
         let output_pieces: Vec<&str> = token_ids[1..] // skip the seed decoder_start_token_id
             .iter()
-            .take_while(|&&id| id != self.config.eos_token_id && id != self.config.forced_eos_token_id)
+            .take_while(|&&id| {
+                id != self.config.eos_token_id && id != self.config.forced_eos_token_id && id != self.config.pad_token_id
+            })
             .filter_map(|&id| self.vocab.piece_of(id))
             .collect();
         self.target_tokenizer.decode_pieces(&output_pieces).context("failed to decode translated text")
     }
+}
+
+/// Force each of `ids`' logits to `-infinity` so `LogitsProcessor::sample`'s
+/// argmax can never select them — used by `translate` to enforce
+/// `MIN_NEW_TOKENS`.
+fn mask_tokens(logits: &Tensor, ids: &[u32]) -> Result<Tensor> {
+    let device = logits.device();
+    let mut logits = logits.to_dtype(DType::F32)?.to_vec1::<f32>()?;
+    for &id in ids {
+        if let Some(logit) = logits.get_mut(id as usize) {
+            *logit = f32::NEG_INFINITY;
+        }
+    }
+    let len = logits.len();
+    Tensor::from_vec(logits, len, device).context("failed to rebuild logits tensor after masking")
 }
 
 /// On-disk cache of translated paragraphs, keyed by a hash of the source

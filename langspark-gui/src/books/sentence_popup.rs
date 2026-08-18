@@ -70,10 +70,16 @@ pub fn build(japanese: &str, callbacks: &SentencePopupCallbacks) -> gtk4::Popove
     let translate = callbacks.translate.clone();
     let done_row = translation_row.clone();
     let error_row = translation_row.clone();
+    // `AdwActionRow::subtitle` renders as Pango markup, not plain text — an
+    // unescaped translation containing a literal '<' (a mistranslated tag,
+    // or the model degenerating into raw special tokens like "<pad>", which
+    // does happen — see the GTK-WARNING this fixes) makes Pango's markup
+    // parser choke on what looks like an unclosed element, instead of the
+    // text just displaying literally.
     translate(
         japanese.to_string(),
-        Box::new(move |english: String| done_row.set_subtitle(&english)),
-        Box::new(move |message: String| error_row.set_subtitle(&message)),
+        Box::new(move |english: String| done_row.set_subtitle(&glib::markup_escape_text(&english))),
+        Box::new(move |message: String| error_row.set_subtitle(&glib::markup_escape_text(&message))),
     );
 
     popover
