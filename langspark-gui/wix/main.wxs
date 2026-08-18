@@ -1,0 +1,131 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  LangSpark's WiX Toolset (v3) installer source, built via `cargo wix -p
+  langspark-gui` (see `.github/workflows/release-builds.yml`'s `windows`
+  job). Lives at `langspark-gui/wix/` (the *package* root), not the
+  workspace root — cargo-wix resolves `wix/main.wxs` relative to the
+  package's own manifest directory, not the workspace's.
+
+  Unlike the usual `cargo wix init` template, this doesn't reference the
+  `$(var.CargoTargetBinDir)` preprocessor variable cargo-wix normally injects
+  (which points at a bare `target\release\` layout) — the `windows` CI job
+  already assembles a self-contained `dist\` directory at the *workspace*
+  root (the .exe plus every GTK4/libadwaita DLL `ntldd` reports it needs,
+  discovered dynamically since that DLL set changes with MSYS2 package
+  updates) before this ever runs, via its "Collect runtime DLLs" step.
+  `Source` paths below use `$(env.GITHUB_WORKSPACE)` (the absolute workspace
+  root GitHub Actions always sets) rather than a path relative to `dist\`
+  itself, since candle.exe's actual working directory when compiling a
+  workspace member's `wix\main.wxs` isn't reliably documented — an absolute
+  path sidesteps that ambiguity entirely.
+
+  `dist\*.dll`'s *component* entries (one per DLL, since WiX has no wildcard
+  file globbing) aren't listed here by hand — that list changes whenever
+  MSYS2's GTK4/libadwaita packages do, so hand-maintaining it would silently
+  go stale. Instead the CI job generates `langspark-gui\wix\harvested.wxs`
+  from whatever is actually in `dist\*.dll` at build time (see that job's
+  "Generate WiX DLL component list" step) — cargo-wix auto-includes every
+  `.wxs` file found in this `wix\` directory, so it's picked up with no
+  extra "include" flag on the command line. `harvested.wxs` is build
+  output, not checked in (see `.gitignore`).
+-->
+
+<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+<?else ?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
+<?endif ?>
+
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+
+    <Product
+        Id='*'
+        Name='LangSpark'
+        UpgradeCode='94F20D6B-95DE-41FD-B8B0-AB4B8F940F38'
+        Manufacturer='Jacob Andresen'
+        Language='1033'
+        Codepage='1252'
+        Version='$(var.Version)'>
+
+        <Package Id='*'
+            Keywords='Installer'
+            Description='LangSpark: offline-first vocabulary and pronunciation practice'
+            Manufacturer='Jacob Andresen'
+            InstallerVersion='450'
+            Languages='1033'
+            Compressed='yes'
+            InstallScope='perMachine'
+            SummaryCodepage='1252'/>
+
+        <MajorUpgrade
+            Schedule='afterInstallInitialize'
+            DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
+
+        <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='Disk #1'/>
+        <Property Id='DiskPrompt' Value='LangSpark Installation'/>
+
+        <Directory Id='TARGETDIR' Name='SourceDir'>
+            <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
+                <!-- Every DLL from `dist\*.dll` is installed directly into this
+                     same folder (not a `bin` subfolder) so Windows' default
+                     DLL search order — the directory containing the running
+                     .exe — finds them with no PATH changes needed. -->
+                <Directory Id='APPLICATIONFOLDER' Name='LangSpark'>
+                    <Component Id='LangSparkExe' Guid='*'>
+                        <File
+                            Id='LangSparkExeFile'
+                            Name='langspark-gui.exe'
+                            DiskId='1'
+                            Source='$(env.GITHUB_WORKSPACE)\dist\langspark-gui.exe'
+                            KeyPath='yes'/>
+                    </Component>
+                </Directory>
+            </Directory>
+            <Directory Id='ProgramMenuFolder'>
+                <Directory Id='ApplicationProgramsFolder' Name='LangSpark'/>
+            </Directory>
+        </Directory>
+
+        <DirectoryRef Id='ApplicationProgramsFolder'>
+            <Component Id='AppStartShortcutComponent' Guid='2E3B6C6E-6E9E-4C63-9F09-6E7EA9D2D5B0'>
+                <Shortcut Id='AppStartShortcut'
+                    Name='LangSpark'
+                    Description='Offline-first vocabulary and pronunciation practice'
+                    Target='[APPLICATIONFOLDER]langspark-gui.exe'
+                    WorkingDirectory='APPLICATIONFOLDER'/>
+                <RemoveFolder Id='ApplicationProgramsFolder' On='uninstall'/>
+                <RegistryValue Root='HKCU' Key='Software\LangSpark' Name='StartShortcut' Type='integer' Value='1' KeyPath='yes'/>
+            </Component>
+        </DirectoryRef>
+
+        <Feature
+            Id='Binaries'
+            Title='LangSpark'
+            Description='The LangSpark application, its GTK4/libadwaita runtime libraries, and a Start Menu shortcut.'
+            Level='1'
+            ConfigurableDirectory='APPLICATIONFOLDER'
+            AllowAdvertise='no'
+            Display='expand'
+            Absent='disallow'>
+
+            <ComponentRef Id='LangSparkExe'/>
+            <ComponentRef Id='AppStartShortcutComponent'/>
+            <!-- Defined in the CI-generated wix\harvested.wxs — see the
+                 file header comment above. -->
+            <ComponentGroupRef Id='DistFiles'/>
+        </Feature>
+
+        <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
+        <Property Id='ARPHELPLINK' Value='https://github.com/jacobandresen/langspark'/>
+
+        <UI>
+            <UIRef Id='WixUI_InstallDir'/>
+        </UI>
+
+        <!-- $(sys.SOURCEFILEDIR): the directory containing this .wxs file
+             itself, regardless of candle.exe's working directory. -->
+        <WixVariable Id='WixUILicenseRtf' Value='$(sys.SOURCEFILEDIR)License.rtf'/>
+
+    </Product>
+
+</Wix>

@@ -359,9 +359,14 @@ const ASR_MODEL_FILES: &[&str] = &[
 /// generated `tokenizer.json`. Mirrors `scripts/setup-asr.sh`, just driven
 /// from the app itself — including needing `python3` on `PATH` for that last
 /// step (see `generate_tokenizer_json`). Doesn't touch libtorch: that's a
-/// *build-time* dependency of the already-running binary, not a runtime one,
-/// so there's nothing for this to install there. Idempotent: skips any file
-/// that already exists, like the shell script.
+/// dynamic *runtime* dependency of an `asr`-featured binary too (confirmed
+/// via `ldd`/`readelf` — a plain `NEEDED libtorch_cpu.so` entry), not just a
+/// build-time one, but it's already present by the time this can run at all
+/// (the binary wouldn't have launched otherwise), so there's still nothing
+/// for this function itself to install. `langspark-gui`'s Preferences dialog
+/// only wires this installer in behind `#[cfg(feature = "asr")]` for exactly
+/// that reason — see its `build` function. Idempotent: skips any file that
+/// already exists, like the shell script.
 pub fn install_asr_model(model: &str, dest_dir: &Path, on_progress: &ProgressFn) -> Result<String> {
     std::fs::create_dir_all(dest_dir).context("failed to create ASR model directory")?;
     let base_url = format!("https://huggingface.co/Qwen/{model}/resolve/main");
@@ -572,18 +577,36 @@ pub fn fetch_book(entry: &BookCatalogEntry, cache_dir: &Path, on_progress: &Prog
 // rather than the more obvious rust-bert.
 // ---------------------------------------------------------------------
 
-/// Files fetched directly from the model's Hugging Face repo. No
-/// `model.safetensors` exists for this one (unlike `ASR_MODEL_FILES`'s
-/// model) — `translation::Translator::load` reads `pytorch_model.bin`
-/// directly instead.
-const TRANSLATION_MODEL_FILES: &[&str] =
-    &["config.json", "pytorch_model.bin", "source.spm", "target.spm", "vocab.json"];
+/// Files fetched directly from the model's Hugging Face repo — everything
+/// except the weights themselves (see `TRANSLATION_MODEL_WEIGHTS_URL`).
+const TRANSLATION_MODEL_FILES: &[&str] = &["config.json", "source.spm", "target.spm", "vocab.json"];
+
+/// Helsinki-NLP published `Helsinki-NLP/opus-mt-ja-en`'s weights only as a
+/// `pytorch_model.bin` in PyTorch's *legacy* pickle format (a bare pickle
+/// stream, no zip wrapper — confirmed against the real downloaded file: it
+/// starts with the raw pickle protocol-2 marker `\x80\x02`, not a zip
+/// local-file-header). `candle`'s pickle/`.pth` reader (what
+/// `translation::Translator` loads weights through) only understands the
+/// newer zip-based format modern `torch.save` produces, and there's no
+/// pre-converted `safetensors` variant of this repo published anywhere
+/// (checked huggingface.co/Helsinki-NLP/opus-mt-ja-en's `/refs` API — no
+/// conversion branch — and the community re-uploads that do exist only
+/// publish ONNX, not safetensors). So this points at a one-time conversion
+/// done ourselves and hosted on our own release rather than converting it at
+/// install time (which needed a throwaway Python/PyTorch venv — exactly the
+/// kind of install-time script this installer otherwise avoids). Same
+/// tensors/values as upstream, just re-saved as safetensors; verified by
+/// loading it through `Translator::load`/`translate` before publishing.
+const TRANSLATION_MODEL_WEIGHTS_URL: &str =
+    "https://github.com/jacobandresen/langspark/releases/download/model-assets-v1/model.safetensors";
 
 /// Download the Helsinki-NLP OPUS-MT Japanese→English translation model
-/// (~300MB) into `dest_dir`, then convert its weights to `model.safetensors`
-/// (see `convert_translation_weights` for why that's a separate step).
-/// Idempotent: skips any file that already exists, matching
-/// `install_asr_model`'s convention.
+/// (~300MB config/tokenizer files from Hugging Face, plus the ~550MB
+/// pre-converted weights from `TRANSLATION_MODEL_WEIGHTS_URL`) into
+/// `dest_dir`. Plain HTTP downloads only, no subprocess — see
+/// `TRANSLATION_MODEL_WEIGHTS_URL`'s doc comment for why the weights come
+/// from there rather than upstream directly. Idempotent: skips any file that
+/// already exists, matching `install_asr_model`'s convention.
 pub fn install_translation_model(dest_dir: &Path, on_progress: &ProgressFn) -> Result<String> {
     std::fs::create_dir_all(dest_dir).context("failed to create translation model directory")?;
     const BASE_URL: &str = "https://huggingface.co/Helsinki-NLP/opus-mt-ja-en/resolve/main";
@@ -599,98 +622,15 @@ pub fn install_translation_model(dest_dir: &Path, on_progress: &ProgressFn) -> R
             .with_context(|| format!("failed to download {file}"))?;
     }
 
-    if !dest_dir.join("model.safetensors").exists() {
-        convert_translation_weights(dest_dir)?;
+    let weights_dest = dest_dir.join("model.safetensors");
+    if !weights_dest.exists() {
+        let mut out = std::fs::File::create(&weights_dest)
+            .with_context(|| format!("failed to create {}", weights_dest.display()))?;
+        download_to(TRANSLATION_MODEL_WEIGHTS_URL, &mut out, on_progress)
+            .context("failed to download model.safetensors")?;
     }
 
     Ok("Installed Helsinki-NLP/opus-mt-ja-en".to_string())
-}
-
-/// Convert `pytorch_model.bin` to `model.safetensors`.
-///
-/// Helsinki-NLP published this checkpoint years ago in PyTorch's *legacy*
-/// pickle format (a bare pickle stream, no zip wrapper — confirmed against
-/// the real downloaded file: it starts with the raw pickle protocol-2
-/// marker `\x80\x02`, not a zip local-file-header). `candle`'s pickle/`.pth`
-/// reader (what `translation::Translator` loads weights through) only
-/// understands the newer zip-based format modern `torch.save` produces, and
-/// there's no pre-converted `safetensors` variant of this particular repo
-/// published anywhere (checked huggingface.co/Helsinki-NLP/opus-mt-ja-en's
-/// `/refs` API — no conversion branch — and the community re-uploads that do
-/// exist only publish ONNX, not safetensors). So this does the one-time
-/// conversion itself, the same way `generate_tokenizer_json` already does
-/// for the ASR model: a throwaway Python venv, removed afterward either way.
-/// This is the only place in the translation feature that touches Python or
-/// (transiently, at install time only) PyTorch — `Translator` itself is
-/// pure-`candle` at runtime, same as before.
-fn convert_translation_weights(model_dir: &Path) -> Result<()> {
-    if std::process::Command::new("python3").arg("--version").output().is_err() {
-        bail!(
-            "python3 is required to convert the translation model's weights (via a throwaway \
-             venv with 'torch' and 'safetensors') but wasn't found on PATH"
-        );
-    }
-
-    let venv_dir = std::env::temp_dir().join(format!("langspark-translation-venv-{}", std::process::id()));
-    let result = convert_translation_weights_with_venv(model_dir, &venv_dir);
-    let _ = std::fs::remove_dir_all(&venv_dir);
-    result
-}
-
-fn convert_translation_weights_with_venv(model_dir: &Path, venv_dir: &Path) -> Result<()> {
-    run_checked(std::process::Command::new("python3").args(["-m", "venv"]).arg(venv_dir))
-        .context("failed to create a Python venv")?;
-
-    let pip = venv_dir.join("bin/pip");
-    run_checked(std::process::Command::new(&pip).args(["install", "--upgrade", "pip", "-q"]))
-        .context("failed to upgrade pip in the venv")?;
-    // CPU-only wheel: the conversion just moves tensors from one file format
-    // to another, no GPU (or even any actual inference) involved. Separate
-    // from the `safetensors` install below — `--index-url` (rather than
-    // `--extra-index-url`) replaces PyPI entirely for this command, and the
-    // PyTorch CPU wheel index doesn't host `safetensors`.
-    run_checked(std::process::Command::new(&pip).args([
-        "install",
-        "torch",
-        "--index-url",
-        "https://download.pytorch.org/whl/cpu",
-        "-q",
-    ]))
-    .context("failed to install 'torch' in the venv")?;
-    // `numpy` isn't imported by this script directly, but
-    // `safetensors.torch.save_file` reaches for it internally.
-    run_checked(std::process::Command::new(&pip).args(["install", "safetensors", "numpy", "-q"]))
-        .context("failed to install 'safetensors'/'numpy' in the venv")?;
-
-    let weights_path = model_dir.join("pytorch_model.bin");
-    let output_path = model_dir.join("model.safetensors");
-    let script = format!(
-        "import torch\n\
-         from safetensors.torch import save_file\n\
-         state_dict = torch.load('{}', map_location='cpu', weights_only=True)\n\
-         # Marian ties its encoder/decoder/output embeddings together (see the\n\
-         # model's own share_encoder_decoder_embeddings config field), which\n\
-         # means several state_dict keys can alias the exact same storage —\n\
-         # safetensors refuses to write aliased tensors, so clone every\n\
-         # tensor to give each key its own independent storage.\n\
-         state_dict = {{k: v.clone().contiguous() for k, v in state_dict.items()}}\n\
-         save_file(state_dict, '{}')\n",
-        weights_path.display(),
-        output_path.display(),
-    );
-    // `env_remove`, not just leaving it alone: a system already set up for
-    // this project's *own* ASR feature (`scripts/setup-asr.sh`) exports
-    // `LD_LIBRARY_PATH` pointing at *that* libtorch install so the Rust
-    // `tch`/`qwen3-asr-rs` linker can find it — if a shell with that already
-    // exported launches LangSpark's installer, this pip-installed `torch`'s
-    // own bundled libtorch gets shadowed by it at import time instead
-    // (mismatched ABI/Python version, so `import torch` fails with an
-    // undefined-symbol error). This conversion is unrelated to that libtorch
-    // install entirely, so the fix is simply not inheriting the variable.
-    run_checked(std::process::Command::new(venv_dir.join("bin/python")).args(["-c", &script]).env_remove("LD_LIBRARY_PATH"))
-        .context("failed to convert translation model weights to safetensors")?;
-
-    Ok(())
 }
 
 #[cfg(test)]

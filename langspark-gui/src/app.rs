@@ -174,7 +174,7 @@ pub fn build_main_window(
             .collect();
         let pronunciation_tab = pronunciation::PronunciationTab::new(
             practice_words,
-            pronunciation_callbacks(active_language, &settings.borrow(), voice_settings.clone()),
+            pronunciation_callbacks(&state, active_language, &settings.borrow(), voice_settings.clone()),
         );
         let pronunciation_page =
             view_stack.add_titled(&pronunciation_tab.widget, Some("pronunciation"), "Pronunciation");
@@ -648,6 +648,7 @@ Preferences — Change the active language (takes effect on restart), TTS \
 voices, SRS algorithm, and audio devices.";
 
 fn unavailable_pronunciation_callbacks(
+    state: &Arc<AppState>,
     active_language: Language,
     device_name: Option<String>,
 ) -> pronunciation::PronunciationCallbacks {
@@ -658,7 +659,7 @@ fn unavailable_pronunciation_callbacks(
         record_duration: RECORDING_DURATION,
         play: Box::new(|_| anyhow::bail!("no audio output backend configured yet")),
         score: Box::new(move |r, e| langspark_core::score_pronunciation(r, e, code)),
-        transcribe: build_transcribe(active_language),
+        transcribe: build_transcribe(state, active_language),
     }
 }
 
@@ -684,9 +685,10 @@ fn asr_model_installed(active_language: Language) -> bool {
 /// `asr` Cargo feature (needs a native libtorch install) — `SpeechRecognizer`
 /// itself reports a clear "unavailable" error otherwise in both cases, so no
 /// feature-gating is needed here.
-fn build_transcribe(active_language: Language) -> Box<dyn Fn(&[f32], u32) -> anyhow::Result<String> + Send + Sync> {
+fn build_transcribe(state: &Arc<AppState>, active_language: Language) -> Box<dyn Fn(&[f32], u32) -> anyhow::Result<String> + Send + Sync> {
     let code = active_language.code().to_string();
     let model_dir = crate::config::AppDirs::new().map(|d| d.asr_model_dir(&code));
+    let state = state.clone();
 
     Box::new(move |samples: &[f32], sample_rate: u32| {
         let dir = model_dir.clone().ok_or_else(|| anyhow::anyhow!("couldn't determine the ASR model directory"))?;
@@ -698,7 +700,21 @@ fn build_transcribe(active_language: Language) -> Box<dyn Fn(&[f32], u32) -> any
             );
         }
 
-        let recognizer = langspark_core::SpeechRecognizer::new(&code, &dir)?;
+        // Loaded once per session and kept resident (see `AppState::recognizer`)
+        // rather than reloading the model's weights from disk on every call —
+        // reloading here previously dominated pronunciation-practice latency
+        // far more than the actual transcription inference did.
+        let recognizer = state.recognizer.get_or_init(|| match langspark_core::SpeechRecognizer::new(&code, &dir) {
+            Ok(r) => Some(Mutex::new(r)),
+            Err(e) => {
+                log::warn!("failed to load ASR model: {e}");
+                None
+            }
+        });
+        let Some(recognizer) = recognizer else {
+            anyhow::bail!("speech recognition model failed to load (see logs)");
+        };
+        let recognizer = recognizer.lock().expect("recognizer mutex poisoned");
 
         // SpeechRecognizer::transcribe reads a WAV file path rather than raw
         // samples, so round-trip through a scratch file.
@@ -870,13 +886,14 @@ fn build_synthesize(
 /// Recording/transcription (speech recognition) are wired the same way
 /// regardless of language — see `build_record`/`build_transcribe`.
 fn pronunciation_callbacks(
+    state: &Arc<AppState>,
     active_language: Language,
     settings: &Settings,
     voice_settings: Arc<Mutex<VoiceSettings>>,
 ) -> pronunciation::PronunciationCallbacks {
     let code = active_language.code();
     let Some(synthesize) = build_synthesize(active_language, voice_settings) else {
-        return unavailable_pronunciation_callbacks(active_language, settings.audio_input_device.clone());
+        return unavailable_pronunciation_callbacks(state, active_language, settings.audio_input_device.clone());
     };
 
     let play_cache_dir = crate::config::AppDirs::new().map(|d| d.audio_cache_dir());
@@ -890,7 +907,7 @@ fn pronunciation_callbacks(
             langspark_core::AudioManager::new(dir).play(wav)
         }),
         score: Box::new(move |r, e| langspark_core::score_pronunciation(r, e, code)),
-        transcribe: build_transcribe(active_language),
+        transcribe: build_transcribe(state, active_language),
     }
 }
 
